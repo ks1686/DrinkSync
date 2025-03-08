@@ -1,2 +1,2 @@
 # DrinkSync
-Spring 2024 CAPSTONE Project
+Spring 2025 CAPSTONE Project
