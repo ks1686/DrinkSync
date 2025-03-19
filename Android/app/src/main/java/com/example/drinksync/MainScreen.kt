@@ -15,8 +15,6 @@ import android.provider.Settings
 fun MainScreen(bluetoothService: BluetoothService) {
     val context = LocalContext.current
     val prefs = remember { Prefs(context) }
-    var currentIntake by remember { mutableStateOf(prefs.getInt("currentIntake", 0)) }
-    val dailyGoal = prefs.getInt("dailyGoal", 64)
 
     Column(
         modifier = Modifier
@@ -30,23 +28,8 @@ fun MainScreen(bluetoothService: BluetoothService) {
             fontSize = 24.sp,
             modifier = Modifier.padding(bottom = 16.dp)
         )
-        Button(
-            onClick = {
-                val newIntake = currentIntake + 8
-                currentIntake = newIntake
-                prefs.saveInt("currentIntake", newIntake)
-                if (newIntake >= dailyGoal) {
-                    val currentStreak = prefs.getInt("streak", 0)
-                    prefs.saveInt("streak", currentStreak + 1)
-                    bluetoothService.sendMessage("True")
-                } else {
-                    bluetoothService.sendMessage("True")
-                }
-            },
-            modifier = Modifier.padding(bottom = 16.dp)
-        ) {
-            Text(text = "Add 8 oz")
-        }
+
+
         Button(
             onClick = {
                 val intent = Intent(Settings.ACTION_SETTINGS)

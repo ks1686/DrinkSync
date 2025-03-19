@@ -1,19 +1,26 @@
 package com.example.drinksync
 
+import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
-class BluetoothService {
+class BluetoothService(private val context: android.content.Context) {
     private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
     private var bluetoothSocket: BluetoothSocket? = null
     private val uuid: UUID = UUID.fromString("94f39d29-7d6d-437d-973b-fba39e49d4ee")
@@ -51,15 +58,44 @@ class BluetoothService {
         }
 
         connectionJob = coroutineScope.launch {
-            val device: BluetoothDevice? = bluetoothAdapter?.getRemoteDevice(deviceAddress)
             var tempSocket: BluetoothSocket? = null
-
             try {
-                tempSocket = device?.createRfcommSocketToServiceRecord(uuid)
-                bluetoothAdapter?.cancelDiscovery()
+                val device: BluetoothDevice? = if (Build.VERSION.SDK_INT < 31 ||
+                    context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+                ) {
+                    bluetoothAdapter?.getRemoteDevice(deviceAddress)
+                } else {
+                    Log.e("BluetoothService", "Missing BLUETOOTH_CONNECT permission")
+                    return@launch
+                }
+
+                tempSocket = if (Build.VERSION.SDK_INT < 31 ||
+                    context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+                ) {
+                    device?.createRfcommSocketToServiceRecord(uuid)
+                } else {
+                    Log.e("BluetoothService", "Missing BLUETOOTH_CONNECT permission")
+                    return@launch
+                }
+
+                if (Build.VERSION.SDK_INT < 31 ||
+                    context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+                ) {
+                    bluetoothAdapter?.cancelDiscovery()
+                } else {
+                    Log.e("BluetoothService", "Missing BLUETOOTH_CONNECT permission")
+                    return@launch
+                }
 
                 withContext(Dispatchers.IO) {
-                    tempSocket?.connect()
+                    if (Build.VERSION.SDK_INT < 31 ||
+                        context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+                    ) {
+                        tempSocket?.connect()
+                    } else {
+                        Log.e("BluetoothService", "Missing BLUETOOTH_CONNECT permission")
+                        return@withContext
+                    }
                 }
 
                 bluetoothSocket = tempSocket
@@ -71,6 +107,10 @@ class BluetoothService {
                 startReceivingMessages()
             } catch (e: IOException) {
                 Log.e("BluetoothService", "Connection failed", e)
+                closeConnection()
+                handler.post { listener?.onConnectionFailed() }
+            } catch (e: SecurityException) {
+                Log.e("BluetoothService", "SecurityException", e)
                 closeConnection()
                 handler.post { listener?.onConnectionFailed() }
             }
@@ -102,10 +142,9 @@ class BluetoothService {
 
         receiveJob = coroutineScope.launch {
             val buffer = ByteArray(1024)
-            var bytes: Int
             while (isConnected.get()) {
                 try {
-                    bytes = withContext(Dispatchers.IO) {
+                    val bytes = withContext(Dispatchers.IO) {
                         inputStream?.read(buffer)
                     } ?: -1
 
