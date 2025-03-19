@@ -1,6 +1,7 @@
 package com.example.drinksync
 
 import android.content.Context
+import androidx.core.content.edit
 
 class Prefs(context: Context) {
     private val sharedPrefs = context.getSharedPreferences("myPrefs", Context.MODE_PRIVATE)
@@ -10,6 +11,6 @@ class Prefs(context: Context) {
     }
 
     fun saveInt(key: String, value: Int) {
-        sharedPrefs.edit().putInt(key, value).apply()
+        sharedPrefs.edit { putInt(key, value) }
     }
 }
