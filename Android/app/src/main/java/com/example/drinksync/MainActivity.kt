@@ -41,7 +41,7 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        bluetoothService = BluetoothService()
+        bluetoothService = BluetoothService(this)
         bluetoothService.setBluetoothListener(object : BluetoothService.BluetoothListener {
             override fun onConnected() {
                 Log.d("MainActivity", "Bluetooth Connected")
