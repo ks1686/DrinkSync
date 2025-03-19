@@ -9,7 +9,13 @@ def main():
     client_sock, client_info = server_sock.accept()
     print(f"Connected to: {client_info}")
 
-    # You could do more work here once connected
+    # Wait for a sync message from the Android phone
+    sync_message = client_sock.recv(1024).decode("utf-8")
+    print(f"Received: {sync_message}")
+
+    if sync_message == "Sync":
+        # Send a confirmation message back to the Android phone
+        client_sock.send("Sync Confirmed")
 
     client_sock.close()
     server_sock.close()
