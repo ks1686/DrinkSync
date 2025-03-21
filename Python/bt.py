@@ -1,25 +1,21 @@
 import bluetooth
+import uuid
 
+target_address = "08:8B:C8:32:4F:5F"
+service_uuid = "c0de2023-cafe-babe-cafe-2023c0debabe"  # same as the Android side
 
-def main():
-    server_sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
-    server_sock.bind(("", bluetooth.PORT_ANY))
-    server_sock.listen(1)
-    print("Waiting for an Android phone to connect...")
-    client_sock, client_info = server_sock.accept()
-    print(f"Connected to: {client_info}")
+service_matches = bluetooth.find_service(uuid=service_uuid, address=target_address)
 
-    # Wait for a sync message from the Android phone
-    sync_message = client_sock.recv(1024).decode("utf-8")
-    print(f"Received: {sync_message}")
+if len(service_matches) == 0:
+    print("Could not find the DrinkSync service.")
+else:
+    first_match = service_matches[0]
+    port = first_match["port"]
+    host = first_match["host"]
 
-    if sync_message == "Sync":
-        # Send a confirmation message back to the Android phone
-        client_sock.send("Sync Confirmed")
-
-    client_sock.close()
-    server_sock.close()
-
-
-if __name__ == "__main__":
-    main()
+    sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
+    sock.connect((host, port))
+    sock.send("Hello phone!")
+    data = sock.recv(1024)
+    print("Received:", data.decode())
+    sock.close()
