@@ -1,5 +1,6 @@
 package com.example.drinksync
 
+
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -17,7 +18,9 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
@@ -39,7 +42,9 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.util.UUID
 
+
 class MainActivity : ComponentActivity() {
+
 
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
         BluetoothAdapter.getDefaultAdapter()
@@ -48,10 +53,12 @@ class MainActivity : ComponentActivity() {
     private val REQUEST_BLUETOOTH_PERMISSION = 1
     private var connectionStatus by mutableStateOf("Not Connected")
 
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         createNotificationChannel()
         enableEdgeToEdge()
+
 
         // Check and request Bluetooth permissions
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
@@ -65,12 +72,14 @@ class MainActivity : ComponentActivity() {
             )
         }
 
+
         setContent {
             DrinkSyncTheme {
                 MainScreen(connectionStatus)
             }
         }
     }
+
 
     override fun onRequestPermissionsResult(
         requestCode: Int,
@@ -87,6 +96,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -97,15 +107,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+
     private fun startServerInThread() {
         Thread { startServer() }.start()
     }
+
 
     private fun startServer() {
         try {
             Log.d("DrinkSync", "Starting Bluetooth server...")
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
                 == PackageManager.PERMISSION_GRANTED) {
+
 
                 val serverSocket = bluetoothAdapter?.listenUsingRfcommWithServiceRecord(
                     "DrinkSyncApp", MY_UUID
@@ -122,6 +135,7 @@ class MainActivity : ComponentActivity() {
                     val buffer = ByteArray(1024)
                     val bytes = inputStream.read(buffer)
                     val incomingMessage = String(buffer, 0, bytes)
+
 
                     Log.d("DrinkSync", "Received message: $incomingMessage")
                     runOnUiThread {
@@ -145,31 +159,38 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+
 // SharedPreferences helper class for storing and retrieving data
 class Prefs(context: Context) {
     private val prefs = context.getSharedPreferences("DrinkSyncPrefs", Context.MODE_PRIVATE)
+
 
     fun saveInt(key: String, value: Int) {
         prefs.edit().putInt(key, value).apply()
     }
 
+
     fun getInt(key: String, defaultValue: Int): Int {
         return prefs.getInt(key, defaultValue)
     }
 
+
     fun saveBoolean(key: String, value: Boolean) {
         prefs.edit().putBoolean(key, value).apply()
     }
+
 
     fun getBoolean(key: String, defaultValue: Boolean): Boolean {
         return prefs.getBoolean(key, defaultValue)
     }
 }
 
+
 @Composable
 fun MainScreen(connectionStatus: String) {
     val navController = rememberNavController()
     val context = LocalContext.current // Get app context
+
 
     Scaffold(
         bottomBar = { BottomNavigationBar(navController) }
@@ -182,6 +203,7 @@ fun MainScreen(connectionStatus: String) {
                 fontSize = 16.sp
             )
 
+
             NavHost(
                 navController, startDestination = "hydration",
                 modifier = Modifier.padding(innerPadding)
@@ -193,6 +215,7 @@ fun MainScreen(connectionStatus: String) {
         }
     }
 }
+
 
 @Composable
 fun BottomNavigationBar(navController: NavHostController) {
@@ -218,41 +241,102 @@ fun BottomNavigationBar(navController: NavHostController) {
     }
 }
 
+
 @Composable
 fun HydrationScreen(context: Context) {
     val prefs = remember { Prefs(context) }
 
+
     val dailyGoal by remember { mutableIntStateOf(prefs.getInt("dailyGoal", 64)) }
     var currentIntake by remember { mutableIntStateOf(prefs.getInt("currentIntake", 0)) }
+    var editIntake by remember { mutableStateOf("") }
+
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("Stay Hydrated!", fontSize = 24.sp)
+
+
+        val progress = currentIntake / dailyGoal.toFloat()
+        val cappedProgress = minOf(progress, 1f)
+        val progressColor = if (progress <= 1f) Color(0xFF2196F3) else Color(0xFF66BB6A)
+
+
         LinearProgressIndicator(
-            progress = { currentIntake / dailyGoal.toFloat() },
+            progress = { cappedProgress },
             modifier = Modifier.fillMaxWidth(),
-            color = Color.Blue
+            color = progressColor
         )
+        if (currentIntake > dailyGoal) {
+            val surplus = currentIntake - dailyGoal
+            Text(
+                text = "✅ You’ve passed your goal by $surplus oz!",
+                color = Color(0xFF66BB6A),
+                fontSize = 16.sp
+            )
+        }
+
+
         Text("Intake: $currentIntake oz / $dailyGoal oz")
 
-        Button(onClick = {
-            if (currentIntake < dailyGoal) {
+
+        // Log 8 oz button
+        Button(
+            onClick = {
                 currentIntake += 8
-                prefs.saveInt("currentIntake", currentIntake) // Save intake
+                prefs.saveInt("currentIntake", currentIntake)
             }
-        }) {
+        ) {
             Text("Log 8 oz")
+        }
+
+
+        // Smaller edit intake field + update button
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.wrapContentSize()
+        ) {
+            OutlinedTextField(
+                value = editIntake,
+                onValueChange = { editIntake = it },
+                label = { Text("Edit Intake") },
+                singleLine = true,
+                modifier = Modifier.width(120.dp)
+            )
+
+
+            Button(
+                onClick = {
+                    val newIntake = editIntake.toIntOrNull()
+                    if (newIntake != null && newIntake >= 0) {
+                        currentIntake = newIntake
+                        prefs.saveInt("currentIntake", currentIntake)
+                        editIntake = ""
+                    }
+                }
+            ) {
+                Text("Update")
+            }
         }
     }
 }
+
+
+
+
+
 
 @Composable
 fun AchievementScreen(context: Context) {
     val prefs = remember { Prefs(context) }
     val streak by remember { mutableIntStateOf(prefs.getInt("streak", 0)) }
+
 
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -267,13 +351,16 @@ fun AchievementScreen(context: Context) {
     }
 }
 
+
 @Composable
 fun SettingsScreen(context: Context) {
     val prefs = remember { Prefs(context) }
 
+
     var notificationsEnabled by remember { mutableStateOf(prefs.getBoolean("notifications", true)) }
     var dailyGoal by remember { mutableIntStateOf(prefs.getInt("dailyGoal", 64)) }
     var dailyGoalText by remember { mutableStateOf(dailyGoal.toString()) }
+
 
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -281,6 +368,7 @@ fun SettingsScreen(context: Context) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("Settings", fontSize = 24.sp)
+
 
         // Notifications toggle
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -291,21 +379,34 @@ fun SettingsScreen(context: Context) {
             })
         }
 
+
         // TextField for Daily Goal
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Daily Goal (oz): ")
-            BasicTextField(
-                value = dailyGoalText,
-                onValueChange = { text ->
-                    dailyGoalText = text
-                    val newGoal = text.toIntOrNull()
-                    if (newGoal != null) {
-                        dailyGoal = newGoal
-                        prefs.saveInt("dailyGoal", dailyGoal)
-                    }
-                }
-            )
+            Box(
+                modifier = Modifier
+                    .width(75.dp)
+                    .border(1.dp, Color.Gray, shape = RoundedCornerShape(6.dp))
+                    .padding(4.dp)
+            ) {
+                BasicTextField(
+                    value = dailyGoalText,
+                    onValueChange = { text ->
+                        dailyGoalText = text
+                        val newGoal = text.toIntOrNull()
+                        if (newGoal != null) {
+                            dailyGoal = newGoal
+                            prefs.saveInt("dailyGoal", dailyGoal)
+                        }
+                    },
+                    singleLine = true,
+                    modifier = Modifier.width(120.dp)
+                )
+            }
+
+
         }
+
 
         // Bluetooth Button - Opens Bluetooth Settings
         Button(onClick = {
