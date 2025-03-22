@@ -1,8 +1,12 @@
 import bluetooth
-import uuid
+import sys
+
+
+# take message to send from first argument when calling the script
+message = sys.argv[1]
 
 target_address = "08:8B:C8:32:4F:5F"
-service_uuid = "c0de2023-cafe-babe-cafe-2023c0debabe"  # same as the Android side
+service_uuid = "wjsdw241-asdw-fbeg-cvet-2025sdfwqwe"  # same as the Android side
 
 service_matches = bluetooth.find_service(uuid=service_uuid, address=target_address)
 
@@ -15,6 +19,9 @@ else:
 
     sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
     sock.connect((host, port))
+
+    #
+
     sock.send("Hello phone!")
     data = sock.recv(1024)
     print("Received:", data.decode())
