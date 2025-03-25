@@ -6,7 +6,7 @@ import sys
 message = sys.argv[1]
 
 target_address = "08:8B:C8:32:4F:5F"
-service_uuid = "wjsdw241-asdw-fbeg-cvet-2025sdfwqwe"  # same as the Android side
+service_uuid = "c7506ec6-09d3-4979-9db3-3b85acad20fd"  # same as the Android side
 
 service_matches = bluetooth.find_service(uuid=service_uuid, address=target_address)
 

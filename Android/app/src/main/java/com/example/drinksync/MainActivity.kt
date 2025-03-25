@@ -49,7 +49,7 @@ class MainActivity : ComponentActivity() {
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
         BluetoothAdapter.getDefaultAdapter()
     }
-    private val MY_UUID: UUID = UUID.fromString("wjsdw241-asdw-fbeg-cvet-2025sdfwqwe")
+    private val MY_UUID: UUID = UUID.fromString("c7506ec6-09d3-4979-9db3-3b85acad20fd")
     private val REQUEST_BLUETOOTH_PERMISSION = 1
     private var connectionStatus by mutableStateOf("Not Connected")
 
