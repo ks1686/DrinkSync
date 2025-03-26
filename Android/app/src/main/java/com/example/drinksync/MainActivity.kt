@@ -15,8 +15,10 @@ import android.provider.Settings
 import android.util.Log
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -34,6 +36,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.*
@@ -49,6 +53,7 @@ import java.util.UUID
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.example.drinksync.R
 
 class MainActivity : ComponentActivity() {
 
@@ -57,6 +62,18 @@ class MainActivity : ComponentActivity() {
     }
     private val MY_UUID: UUID = UUID.fromString("c7506ec6-09d3-4979-9db3-3b85acad20fd")
     private val REQUEST_BLUETOOTH_PERMISSION = 1
+
+    // Declare notification permission launcher
+    private val requestNotificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
+            if (isGranted) {
+                // Permission is granted. Continue the action or workflow
+                Log.d("Notifications", "Notification permission granted")
+            } else {
+                Log.d("Notifications", "Notification permission denied")
+            }
+        }
+
     private var connectionStatus by mutableStateOf("Not Connected")
 
     @RequiresApi(Build.VERSION_CODES.O)
@@ -64,6 +81,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         createNotificationChannel()
         enableEdgeToEdge()
+
+        // Request notification permissions
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            requestNotificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
 
         // Check and request Bluetooth permissions
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
@@ -295,6 +317,14 @@ fun HydrationScreen(context: Context) {
     //For the first 15 mins after midnight, the timer checks every 1 minute instead of 5
     var isWithin15MinutesOfMidnight by remember { mutableStateOf(false) }
     var streak by remember { mutableIntStateOf(prefs.getInt("streak", 0)) } //Current Streak
+    val context = LocalContext.current
+
+    //Notifications enabled state
+    val notificationsEnabled = remember { mutableStateOf(prefs.getBoolean("notifications", true))}
+    // Track which notification percentages have been sent
+    val notificationTriggers = remember {
+        mutableStateOf(mutableSetOf<Int>())
+    }
 
     // Function to save the boolean
     fun saveHasHitGoal(context: Context, value: Boolean) {
@@ -313,7 +343,38 @@ fun HydrationScreen(context: Context) {
     fun saveStreak(value: Int) {
         prefs.saveInt("streak", value)
     }
+    fun sendProgressNotification(progress: Int) {
 
+        if (notificationsEnabled.value) {
+            val notificationId = 2 // Unique ID for progress notifications
+
+            val builder = NotificationCompat.Builder(context, "hydration_reminder")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle("Hydration Update!")
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+
+            val contentText = when (progress) {
+                0 -> "Let's get started! Log your first glass of water."
+                25 -> "Great job! You're 25% of the way to your goal."
+                50 -> "You're halfway there! Keep it up!"
+                100 -> "Congratulations! You've reached your hydration goal for today!"
+                else -> return // Don't send other updates
+            }
+
+            builder.setContentText(contentText)
+            with(NotificationManagerCompat.from(context)) {
+                if (ActivityCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.POST_NOTIFICATIONS
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    return
+                }
+                notify(notificationId, builder.build())
+            }
+
+        }
+    }
     // Function to reset daily values
     fun resetDailyValues() {
         Log.d("ResetDailyValues", "Running daily reset...")
@@ -353,7 +414,7 @@ fun HydrationScreen(context: Context) {
                 if (today != lastResetDate) {
                     resetDailyValues()
                 }
-                //Check if is in the 15 min mark after midnight
+
                 val currentTime = LocalTime.now()
                 val midnight = LocalTime.MIDNIGHT
                 val fifteenMinutesAfterMidnight = midnight.plusMinutes(15)
@@ -366,22 +427,27 @@ fun HydrationScreen(context: Context) {
             lifeCycleOwner.lifecycle.removeObserver(observer)
         }
     }
-    // Daily Reset Check with interval
-    LaunchedEffect(key1 = Unit) {  // Run only once when the composable is first created
-        while (true) {
-            val today = LocalDate.now(ZoneId.systemDefault()).toString()
-            if (today != lastResetDate) {
-                resetDailyValues()
-            }
-            if (isWithin15MinutesOfMidnight){
-                delay(60000) // Check every 60 seconds for first 15 minutes after midnight
-            } else{
-                delay(300000) // Check every 5 minutes after that
-            }
+    LaunchedEffect(key1 = currentIntake, key2 = notificationsEnabled.value) { // Track Intake change for notification
+        val progress = (currentIntake.toFloat() / dailyGoal.toFloat() * 100).toInt()
+        Log.d("Progress", progress.toString())
 
+        if (notificationsEnabled.value) {
+            if (progress == 0) {
+                sendProgressNotification(progress)
+            } else if (progress >= 25 && progress < 50 && !notificationTriggers.value.contains(25)){
+                sendProgressNotification(25)
+                notificationTriggers.value.add(25)
+            } else if (progress >= 50 && progress < 100 && !notificationTriggers.value.contains(50)){
+                sendProgressNotification(50)
+                notificationTriggers.value.add(50)
+            } else if (progress >= 100 && !notificationTriggers.value.contains(100)){
+                sendProgressNotification(100)
+                notificationTriggers.value.add(100)
+            }
 
         }
     }
+
 
     Column(
         modifier = Modifier
@@ -465,6 +531,8 @@ fun HydrationScreen(context: Context) {
                 // Update hasHitGoal based on the new intake
                 hasHitGoal = currentIntake >= dailyGoal
                 saveHasHitGoal(context, hasHitGoal) // Also save the updated value to prefs
+                val progress = (currentIntake.toFloat() / dailyGoal.toFloat() * 100).toInt()
+                sendProgressNotification(progress)
 
             }
         ) {
@@ -506,6 +574,8 @@ fun HydrationScreen(context: Context) {
                             halfwayToGoal = false
                             saveAchievement("halfwayToGoal", false)
                         }
+                        val progress = (currentIntake.toFloat() / dailyGoal.toFloat() * 100).toInt()
+                        sendProgressNotification(progress)
                     }
                 }
             ) {
@@ -630,7 +700,10 @@ fun AchievementItem(achievementName: String, isAchieved: Boolean, description: S
 fun SettingsScreen(context: Context) {
     val prefs = remember { Prefs(context) }
 
-    var notificationsEnabled by remember { mutableStateOf(prefs.getBoolean("notifications", true)) }
+    // Use remember and mutableStateOf to hold the state
+    val notificationsEnabled = remember {
+        mutableStateOf(prefs.getBoolean("notifications", true))
+    }
     var dailyGoal by remember { mutableIntStateOf(prefs.getInt("dailyGoal", 64)) }
     var dailyGoalText by remember { mutableStateOf(dailyGoal.toString()) }
 
@@ -646,10 +719,13 @@ fun SettingsScreen(context: Context) {
         // Notifications toggle
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Notifications")
-            Switch(checked = notificationsEnabled, onCheckedChange = {
-                notificationsEnabled = it
-                prefs.saveBoolean("notifications", notificationsEnabled)
-            })
+            Switch(
+                checked = notificationsEnabled.value,
+                onCheckedChange = { newValue ->
+                    notificationsEnabled.value = newValue
+                    prefs.saveBoolean("notifications", newValue)
+                }
+            )
         }
 
         // TextField for Daily Goal
