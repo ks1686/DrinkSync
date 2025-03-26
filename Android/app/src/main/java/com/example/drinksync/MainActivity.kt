@@ -1,6 +1,5 @@
 package com.example.drinksync
 
-
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -42,9 +41,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.util.UUID
 
-
 class MainActivity : ComponentActivity() {
-
 
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
         BluetoothAdapter.getDefaultAdapter()
@@ -53,12 +50,10 @@ class MainActivity : ComponentActivity() {
     private val REQUEST_BLUETOOTH_PERMISSION = 1
     private var connectionStatus by mutableStateOf("Not Connected")
 
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         createNotificationChannel()
         enableEdgeToEdge()
-
 
         // Check and request Bluetooth permissions
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
@@ -72,14 +67,12 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-
         setContent {
             DrinkSyncTheme {
                 MainScreen(connectionStatus)
             }
         }
     }
-
 
     override fun onRequestPermissionsResult(
         requestCode: Int,
@@ -96,7 +89,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -107,18 +99,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-
     private fun startServerInThread() {
         Thread { startServer() }.start()
     }
-
 
     private fun startServer() {
         try {
             Log.d("DrinkSync", "Starting Bluetooth server...")
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
                 == PackageManager.PERMISSION_GRANTED) {
-
 
                 val serverSocket = bluetoothAdapter?.listenUsingRfcommWithServiceRecord(
                     "DrinkSyncApp", MY_UUID
@@ -135,7 +124,6 @@ class MainActivity : ComponentActivity() {
                     val buffer = ByteArray(1024)
                     val bytes = inputStream.read(buffer)
                     val incomingMessage = String(buffer, 0, bytes)
-
 
                     Log.d("DrinkSync", "Received message: $incomingMessage")
                     runOnUiThread {
@@ -159,38 +147,31 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-
 // SharedPreferences helper class for storing and retrieving data
 class Prefs(context: Context) {
     private val prefs = context.getSharedPreferences("DrinkSyncPrefs", Context.MODE_PRIVATE)
-
 
     fun saveInt(key: String, value: Int) {
         prefs.edit().putInt(key, value).apply()
     }
 
-
     fun getInt(key: String, defaultValue: Int): Int {
         return prefs.getInt(key, defaultValue)
     }
 
-
     fun saveBoolean(key: String, value: Boolean) {
         prefs.edit().putBoolean(key, value).apply()
     }
-
 
     fun getBoolean(key: String, defaultValue: Boolean): Boolean {
         return prefs.getBoolean(key, defaultValue)
     }
 }
 
-
 @Composable
 fun MainScreen(connectionStatus: String) {
     val navController = rememberNavController()
     val context = LocalContext.current // Get app context
-
 
     Scaffold(
         bottomBar = { BottomNavigationBar(navController) }
@@ -203,7 +184,6 @@ fun MainScreen(connectionStatus: String) {
                 fontSize = 16.sp
             )
 
-
             NavHost(
                 navController, startDestination = "hydration",
                 modifier = Modifier.padding(innerPadding)
@@ -215,7 +195,6 @@ fun MainScreen(connectionStatus: String) {
         }
     }
 }
-
 
 @Composable
 fun BottomNavigationBar(navController: NavHostController) {
@@ -241,31 +220,33 @@ fun BottomNavigationBar(navController: NavHostController) {
     }
 }
 
-
 @Composable
 fun HydrationScreen(context: Context) {
     val prefs = remember { Prefs(context) }
 
-
     val dailyGoal by remember { mutableIntStateOf(prefs.getInt("dailyGoal", 64)) }
     var currentIntake by remember { mutableIntStateOf(prefs.getInt("currentIntake", 0)) }
     var editIntake by remember { mutableStateOf("") }
+    var hasHitGoal by remember {
+        mutableStateOf(prefs.getBoolean("hasHitGoal", false))
+    }
 
+    // Function to save the boolean
+    fun saveHasHitGoal(context: Context, value: Boolean) {
+        val editor = Prefs(context)
+        editor.saveBoolean("hasHitGoal", value)
+    }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
+        modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("Stay Hydrated!", fontSize = 24.sp)
 
-
         val progress = currentIntake / dailyGoal.toFloat()
         val cappedProgress = minOf(progress, 1f)
         val progressColor = if (progress <= 1f) Color(0xFF2196F3) else Color(0xFF66BB6A)
-
 
         LinearProgressIndicator(
             progress = { cappedProgress },
@@ -281,20 +262,24 @@ fun HydrationScreen(context: Context) {
             )
         }
 
-
         Text("Intake: $currentIntake oz / $dailyGoal oz")
-
 
         // Log 8 oz button
         Button(
             onClick = {
+                // Allow logging up to the daily goal, and beyond.
                 currentIntake += 8
                 prefs.saveInt("currentIntake", currentIntake)
+
+
+                // Update hasHitGoal based on the new intake
+                hasHitGoal = currentIntake >= dailyGoal
+                saveHasHitGoal(context, hasHitGoal) // Also save the updated value to prefs
+
             }
         ) {
             Text("Log 8 oz")
         }
-
 
         // Smaller edit intake field + update button
         Row(
@@ -310,14 +295,16 @@ fun HydrationScreen(context: Context) {
                 modifier = Modifier.width(120.dp)
             )
 
-
             Button(
                 onClick = {
                     val newIntake = editIntake.toIntOrNull()
                     if (newIntake != null && newIntake >= 0) {
                         currentIntake = newIntake
                         prefs.saveInt("currentIntake", currentIntake)
-                        editIntake = ""
+
+                        // Update hasHitGoal based on the new intake
+                        hasHitGoal = currentIntake >= dailyGoal
+                        saveHasHitGoal(context, hasHitGoal) // Also save the updated value to prefs
                     }
                 }
             ) {
@@ -327,48 +314,54 @@ fun HydrationScreen(context: Context) {
     }
 }
 
-
-
-
-
-
 @Composable
 fun AchievementScreen(context: Context) {
     val prefs = remember { Prefs(context) }
+
+    // This is crucial:  Fetch the value from prefs EACH TIME the composable is drawn.
+    val hasHitGoal by remember {
+        derivedStateOf { prefs.getBoolean("hasHitGoal", false) }
+    }
+
     val streak by remember { mutableIntStateOf(prefs.getInt("streak", 0)) }
 
-
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("Your Streak: $streak days", fontSize = 24.sp)
         Spacer(modifier = Modifier.height(16.dp))
         Text("Achievements Unlocked:")
+
+        // Conditional display for "Hit Daily Goal!" achievement
+        val dailyGoalEmoji = if (hasHitGoal) "✅" else "\uD83D\uDD12" // Use a locked emoji when not achieved
+        Text("$dailyGoalEmoji Hit Daily Goal!")
+
+
         if (streak >= 7) Text("🏅 Hydration Hero - 7-day streak!")
         if (streak >= 30) Text("🔥 Ultimate Hydration Master - 30-day streak!")
     }
 }
 
-
 @Composable
 fun SettingsScreen(context: Context) {
     val prefs = remember { Prefs(context) }
-
 
     var notificationsEnabled by remember { mutableStateOf(prefs.getBoolean("notifications", true)) }
     var dailyGoal by remember { mutableIntStateOf(prefs.getInt("dailyGoal", 64)) }
     var dailyGoalText by remember { mutableStateOf(dailyGoal.toString()) }
 
-
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("Settings", fontSize = 24.sp)
-
 
         // Notifications toggle
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -378,7 +371,6 @@ fun SettingsScreen(context: Context) {
                 prefs.saveBoolean("notifications", notificationsEnabled)
             })
         }
-
 
         // TextField for Daily Goal
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -403,10 +395,7 @@ fun SettingsScreen(context: Context) {
                     modifier = Modifier.width(120.dp)
                 )
             }
-
-
         }
-
 
         // Bluetooth Button - Opens Bluetooth Settings
         Button(onClick = {
