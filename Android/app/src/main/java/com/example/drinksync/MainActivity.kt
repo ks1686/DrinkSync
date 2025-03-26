@@ -38,11 +38,17 @@ import androidx.core.content.ContextCompat
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.*
 import com.example.drinksync.ui.theme.DrinkSyncTheme
+import kotlinx.coroutines.delay
 import java.io.InputStream
 import java.io.OutputStream
 import java.time.LocalTime
 import java.time.Duration
+import java.time.LocalDate
+import java.time.ZoneId
 import java.util.UUID
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 
 class MainActivity : ComponentActivity() {
 
@@ -186,6 +192,14 @@ class Prefs(context: Context) {
     fun getStringSet(key: String, defaultValue: Set<String>?): Set<String>? {
         return prefs.getStringSet(key, defaultValue)
     }
+
+    fun saveString(key: String, value: String?) {
+        prefs.edit().putString(key, value,).apply()
+    }
+
+    fun getString(key: String, defaultValue: String?): String? {
+        return prefs.getString(key,defaultValue)
+    }
 }
 
 @RequiresApi(Build.VERSION_CODES.O)
@@ -274,6 +288,13 @@ fun HydrationScreen(context: Context) {
     //Boolean for if a time between 5 AM and 7 AM was logged
     var earlyBirdDrinker by remember { mutableStateOf(prefs.getBoolean("earlyBirdDrinker", false)) }
 
+    //Store today's date for Daily Reset function
+    var lastResetDate by remember {
+        mutableStateOf(prefs.getString("lastResetDate", null) ?: LocalDate.now(ZoneId.systemDefault()).toString())
+    }
+    //For the first 15 mins after midnight, the timer checks every 1 minute instead of 5
+    var isWithin15MinutesOfMidnight by remember { mutableStateOf(false) }
+
     // Function to save the boolean
     fun saveHasHitGoal(context: Context, value: Boolean) {
         val editor = Prefs(context)
@@ -286,6 +307,69 @@ fun HydrationScreen(context: Context) {
 
     fun saveTotalIntake(intake: Int) {
         prefs.saveInt("totalIntake", intake)
+    }
+
+    // Function to reset daily values
+    fun resetDailyValues() {
+        Log.d("ResetDailyValues", "Running daily reset...")
+
+        currentIntake = 0
+        prefs.saveInt("currentIntake", currentIntake)
+
+        hasHitGoal = false
+        saveHasHitGoal(context, false)
+
+        halfwayToGoal = false
+        saveAchievement("halfwayToGoal", false)
+
+        dailyLogCount = 0
+        // Save that today is the current date in shared preferences to know when to reset the values again
+        val today = LocalDate.now(ZoneId.systemDefault()).toString()
+        lastResetDate = today
+        prefs.saveString("lastResetDate", today)
+
+        Log.d("ResetDailyValues", "Daily reset complete. Current Intake: $currentIntake, hasHitGoal: $hasHitGoal, halfwayToGoal: $halfwayToGoal, Date: $today")
+    }
+
+    val lifeCycleOwner = LocalLifecycleOwner.current
+    // Lifecycle Observer for App Foregrounding
+    DisposableEffect(lifeCycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                // App has come to the foreground, check the date immediately
+                Log.d("LifeCycle", "ON_RESUME event")
+                val today = LocalDate.now(ZoneId.systemDefault()).toString()
+                if (today != lastResetDate) {
+                    resetDailyValues()
+                }
+                //Check if is in the 15 min mark after midnight
+                val currentTime = LocalTime.now()
+                val midnight = LocalTime.MIDNIGHT
+                val fifteenMinutesAfterMidnight = midnight.plusMinutes(15)
+
+                isWithin15MinutesOfMidnight = currentTime.isAfter(midnight) && currentTime.isBefore(fifteenMinutesAfterMidnight)
+            }
+        }
+        lifeCycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifeCycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+    // Daily Reset Check with interval
+    LaunchedEffect(key1 = Unit) {  // Run only once when the composable is first created
+        while (true) {
+            val today = LocalDate.now(ZoneId.systemDefault()).toString()
+            if (today != lastResetDate) {
+                resetDailyValues()
+            }
+            if (isWithin15MinutesOfMidnight){
+                delay(60000) // Check every 60 seconds for first 15 minutes after midnight
+            } else{
+                delay(300000) // Check every 5 minutes after that
+            }
+
+
+        }
     }
 
     Column(
