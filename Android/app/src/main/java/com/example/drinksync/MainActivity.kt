@@ -17,6 +17,7 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,6 +40,8 @@ import androidx.navigation.compose.*
 import com.example.drinksync.ui.theme.DrinkSyncTheme
 import java.io.InputStream
 import java.io.OutputStream
+import java.time.LocalTime
+import java.time.Duration
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
@@ -50,6 +53,7 @@ class MainActivity : ComponentActivity() {
     private val REQUEST_BLUETOOTH_PERMISSION = 1
     private var connectionStatus by mutableStateOf("Not Connected")
 
+    @RequiresApi(Build.VERSION_CODES.O)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         createNotificationChannel()
@@ -166,8 +170,25 @@ class Prefs(context: Context) {
     fun getBoolean(key: String, defaultValue: Boolean): Boolean {
         return prefs.getBoolean(key, defaultValue)
     }
+
+    fun saveLong(key: String, value: Long) {
+        prefs.edit().putLong(key, value).apply()
+    }
+
+    fun getLong(key: String, defaultValue: Long): Long {
+        return prefs.getLong(key, defaultValue)
+    }
+
+    fun saveStringSet(key: String, value: Set<String>?) {
+        prefs.edit().putStringSet(key, value).apply()
+    }
+
+    fun getStringSet(key: String, defaultValue: Set<String>?): Set<String>? {
+        return prefs.getStringSet(key, defaultValue)
+    }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun MainScreen(connectionStatus: String) {
     val navController = rememberNavController()
@@ -220,6 +241,7 @@ fun BottomNavigationBar(navController: NavHostController) {
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun HydrationScreen(context: Context) {
     val prefs = remember { Prefs(context) }
@@ -231,14 +253,45 @@ fun HydrationScreen(context: Context) {
         mutableStateOf(prefs.getBoolean("hasHitGoal", false))
     }
 
+    // New states for achievements:
+    var firstSip by remember { mutableStateOf(prefs.getBoolean("firstSip", false)) }
+    var halfwayToGoal by remember { mutableStateOf(prefs.getBoolean("halfwayToGoal", false)) }
+    var hydrationHero by remember { mutableStateOf(prefs.getBoolean("hydrationHero", false)) }
+    var bigGulp by remember { mutableStateOf(prefs.getBoolean("bigGulp", false)) }
+
+    // Total water intake across app usage
+    var totalIntake by remember { mutableIntStateOf(prefs.getInt("totalIntake", 0)) }
+
+    // Time app was opened (for "Quick Drink" achievement)
+    val appOpenTime = remember { mutableStateOf(System.currentTimeMillis()) }
+
+    // Number of water intake logs in the current day (for "Frequent Hydrator")
+    var dailyLogCount by remember { mutableIntStateOf(0) }
+
+    //Boolean for if a time between 12 AM and 3 AM was logged
+    var lateNightSip by remember { mutableStateOf(prefs.getBoolean("lateNightSip", false)) }
+
+    //Boolean for if a time between 5 AM and 7 AM was logged
+    var earlyBirdDrinker by remember { mutableStateOf(prefs.getBoolean("earlyBirdDrinker", false)) }
+
     // Function to save the boolean
     fun saveHasHitGoal(context: Context, value: Boolean) {
         val editor = Prefs(context)
         editor.saveBoolean("hasHitGoal", value)
     }
 
+    fun saveAchievement(key: String, value: Boolean) {
+        prefs.saveBoolean(key, value)
+    }
+
+    fun saveTotalIntake(intake: Int) {
+        prefs.saveInt("totalIntake", intake)
+    }
+
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -268,10 +321,52 @@ fun HydrationScreen(context: Context) {
         Button(
             onClick = {
                 // Allow logging up to the daily goal, and beyond.
-                currentIntake += 8
+                val intakeAmount = 8
+                currentIntake += intakeAmount
+                totalIntake += intakeAmount
+                saveTotalIntake(totalIntake)
                 prefs.saveInt("currentIntake", currentIntake)
+                dailyLogCount++ //Increment log counter
 
+                // Achievement logic
+                if (!firstSip) {
+                    firstSip = true
+                    saveAchievement("firstSip", true)
+                }
 
+                // Check for Halfway to Goal Achievement
+                if (currentIntake >= dailyGoal / 2) {
+                    halfwayToGoal = true
+                    saveAchievement("halfwayToGoal", true)
+                }
+
+                if (currentIntake >= dailyGoal && !hydrationHero) {
+                    hydrationHero = true
+                    saveAchievement("hydrationHero", true)
+                }
+                // Check time of day for Late Night Sip
+                val currentTime = LocalTime.now()
+                if (!lateNightSip && currentTime.isAfter(LocalTime.MIDNIGHT) && currentTime.isBefore(
+                        LocalTime.of(3, 0)
+                    )
+                ) {
+                    lateNightSip = true
+                    saveAchievement("lateNightSip", true)
+                }
+
+                // Check time of day for Morning Dew
+                if (!earlyBirdDrinker && currentTime.isAfter(LocalTime.of(5, 0)) && currentTime.isBefore(
+                        LocalTime.of(7, 0)
+                    )
+                ) {
+                    earlyBirdDrinker = true
+                    saveAchievement("earlyBirdDrinker", true)
+                }
+                // Set Big Gulp boolean when 32 oz or more is logged in a session
+                if (intakeAmount >= 32 && !bigGulp) {
+                    bigGulp = true
+                    saveAchievement("bigGulp", true)
+                }
                 // Update hasHitGoal based on the new intake
                 hasHitGoal = currentIntake >= dailyGoal
                 saveHasHitGoal(context, hasHitGoal) // Also save the updated value to prefs
@@ -299,12 +394,23 @@ fun HydrationScreen(context: Context) {
                 onClick = {
                     val newIntake = editIntake.toIntOrNull()
                     if (newIntake != null && newIntake >= 0) {
+                        // Update the current intake AND total intake
+                        val intakeDifference = newIntake - currentIntake // Calculate the difference
                         currentIntake = newIntake
+                        totalIntake += intakeDifference // Update total intake
+
                         prefs.saveInt("currentIntake", currentIntake)
+                        saveTotalIntake(totalIntake)
 
                         // Update hasHitGoal based on the new intake
                         hasHitGoal = currentIntake >= dailyGoal
                         saveHasHitGoal(context, hasHitGoal) // Also save the updated value to prefs
+
+                        // Reset halfwayToGoal if currentIntake < dailyGoal / 2
+                        if (currentIntake < dailyGoal / 2) {
+                            halfwayToGoal = false
+                            saveAchievement("halfwayToGoal", false)
+                        }
                     }
                 }
             ) {
@@ -314,6 +420,7 @@ fun HydrationScreen(context: Context) {
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun AchievementScreen(context: Context) {
     val prefs = remember { Prefs(context) }
@@ -324,6 +431,25 @@ fun AchievementScreen(context: Context) {
     }
 
     val streak by remember { mutableIntStateOf(prefs.getInt("streak", 0)) }
+
+    // Achievement States - Fetch from Prefs
+    val firstSip by remember { derivedStateOf { prefs.getBoolean("firstSip", false) } }
+    val halfwayToGoal by remember { derivedStateOf { prefs.getBoolean("halfwayToGoal", false) } }
+    val hydrationHero by remember { derivedStateOf { prefs.getBoolean("hydrationHero", false) } }
+    val totalIntake by remember { derivedStateOf { prefs.getInt("totalIntake", 0) } }
+    val appOpenTimeState = remember { mutableStateOf(System.currentTimeMillis()) } // Correctly declared outside button
+    val lastLogTime = remember { mutableStateOf(prefs.getLong("lastLogTime", 0L)) }
+    val thirstResponder by remember {
+        derivedStateOf {
+            prefs.getStringSet("dailyLogs", emptySet())?.size ?: 0
+        }
+    }
+    val lateNightSip by remember { derivedStateOf { prefs.getBoolean("lateNightSip", false) } }
+    val earlyBirdDrinker by remember { derivedStateOf { prefs.getBoolean("earlyBirdDrinker", false) } }
+    val bigGulp by remember { derivedStateOf { prefs.getBoolean("bigGulp", false) } }
+
+    // Update AppOpenTime
+    val appOpenTime = remember { mutableStateOf(System.currentTimeMillis()) }
 
     Column(
         modifier = Modifier
@@ -340,9 +466,67 @@ fun AchievementScreen(context: Context) {
         val dailyGoalEmoji = if (hasHitGoal) "✅" else "\uD83D\uDD12" // Use a locked emoji when not achieved
         Text("$dailyGoalEmoji Hit Daily Goal!")
 
+        // Achievements with locked/unlocked status
+        AchievementItem(
+            achievementName = "First Sip!",
+            isAchieved = firstSip,
+            description = "Log your first water intake."
+        )
+        AchievementItem(
+            achievementName = "Halfway to Goal!",
+            isAchieved = halfwayToGoal,
+            description = "Reach 50% of your daily hydration goal."
+        )
+        AchievementItem(
+            achievementName = "Hydration Hero!",
+            isAchieved = hydrationHero,
+            description = "Hit your daily hydration goal for the first time."
+        )
+        AchievementItem(
+            achievementName = "Total Hydration Master (10,000 oz)!",
+            isAchieved = totalIntake >= 10000,
+            description = "Log over 10,000 oz of water in total."
+        )
+        AchievementItem(
+            achievementName = "Quick Drink",
+            isAchieved = (System.currentTimeMillis() - appOpenTime.value) < 300000,
+            description = "Log water within 5 minutes of opening the app."
+        )
+        AchievementItem(
+            achievementName = "Frequent Hydrator",
+            isAchieved = thirstResponder >= 5,
+            description = "Log water intake at least 5 times in a single day."
+        )
+        AchievementItem(
+            achievementName = "Late Night Sip",
+            isAchieved = lateNightSip,
+            description = "Log water intake between 12:00 AM and 3:00 AM."
+        )
+        AchievementItem(
+            achievementName = "Early Bird Drinker",
+            isAchieved = earlyBirdDrinker,
+            description = "Log water intake between 5:00 AM and 7:00 AM."
+        )
+        AchievementItem(
+            achievementName = "Big Gulp",
+            isAchieved = bigGulp,
+            description = "Log 32 oz or more of water in one logging session."
+        )
+        if (streak >= 7) Text("🏅 One-Week Warrior!")
+        if (streak >= 30) Text("🔥 Consistent Hydrator - 30-day streak!")
+    }
+}
 
-        if (streak >= 7) Text("🏅 Hydration Hero - 7-day streak!")
-        if (streak >= 30) Text("🔥 Ultimate Hydration Master - 30-day streak!")
+@Composable
+fun AchievementItem(achievementName: String, isAchieved: Boolean, description: String) {
+    val emoji = if (isAchieved) "✅" else "\uD83D\uDD12"
+    Column {
+        Text("$emoji $achievementName")
+        Text(
+            text = description,
+            fontSize = 12.sp,
+            color = Color.Gray
+        ) // Smaller, grayed-out description
     }
 }
 
