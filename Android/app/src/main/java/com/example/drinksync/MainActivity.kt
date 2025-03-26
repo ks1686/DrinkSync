@@ -294,6 +294,7 @@ fun HydrationScreen(context: Context) {
     }
     //For the first 15 mins after midnight, the timer checks every 1 minute instead of 5
     var isWithin15MinutesOfMidnight by remember { mutableStateOf(false) }
+    var streak by remember { mutableIntStateOf(prefs.getInt("streak", 0)) } //Current Streak
 
     // Function to save the boolean
     fun saveHasHitGoal(context: Context, value: Boolean) {
@@ -308,11 +309,21 @@ fun HydrationScreen(context: Context) {
     fun saveTotalIntake(intake: Int) {
         prefs.saveInt("totalIntake", intake)
     }
+    // Function to save streak
+    fun saveStreak(value: Int) {
+        prefs.saveInt("streak", value)
+    }
 
     // Function to reset daily values
     fun resetDailyValues() {
         Log.d("ResetDailyValues", "Running daily reset...")
-
+        //Check if goal was hit and add to streak
+        if(hasHitGoal){
+            streak += 1
+        } else{
+            streak = 0
+        }
+        saveStreak(streak)
         currentIntake = 0
         prefs.saveInt("currentIntake", currentIntake)
 
@@ -531,6 +542,7 @@ fun AchievementScreen(context: Context) {
     val lateNightSip by remember { derivedStateOf { prefs.getBoolean("lateNightSip", false) } }
     val earlyBirdDrinker by remember { derivedStateOf { prefs.getBoolean("earlyBirdDrinker", false) } }
     val bigGulp by remember { derivedStateOf { prefs.getBoolean("bigGulp", false) } }
+    val currentStreak by remember { derivedStateOf { prefs.getInt("streak", 0) } }
 
     // Update AppOpenTime
     val appOpenTime = remember { mutableStateOf(System.currentTimeMillis()) }
@@ -542,7 +554,7 @@ fun AchievementScreen(context: Context) {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("Your Streak: $streak days", fontSize = 24.sp)
+        Text("Your Streak: $currentStreak days", fontSize = 24.sp)
         Spacer(modifier = Modifier.height(16.dp))
         Text("Achievements Unlocked:")
 
@@ -596,8 +608,8 @@ fun AchievementScreen(context: Context) {
             isAchieved = bigGulp,
             description = "Log 32 oz or more of water in one logging session."
         )
-        if (streak >= 7) Text("🏅 One-Week Warrior!")
-        if (streak >= 30) Text("🔥 Consistent Hydrator - 30-day streak!")
+        if (currentStreak >= 7) Text("🏅 One-Week Warrior!")
+        if (currentStreak >= 30) Text("🔥 Consistent Hydrator - 30-day streak!")
     }
 }
 
