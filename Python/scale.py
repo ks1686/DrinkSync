@@ -42,16 +42,7 @@ def get_filtered_weight(samples=15):
 hx.reset()
 stable_tare()
 
-# ** Set the reference unit **
-
-### Steps to calibrate ###
-# 1. Measure empty scale weight (tare)
-# 2. Measure known weight (e.g. 500g)
-# 3. Calculate the reference unit using the formula:
-#    referenceUnit = filtered_weight / known_weight
-# 4. Set the reference unit in the code
-
-referenceUnit = 723.75  # Adjust this based on calibration
+referenceUnit = 425.37 # Adjust this based on calibration
 hx.set_reference_unit(referenceUnit)
 
 print("\nTare done! Ready to take readings...")
@@ -91,3 +82,13 @@ def take_reading():
     except Exception as e:
         print(f"Error during reading: {e}")
         cleanAndExit()
+
+
+# loop to test readings
+try:
+    while True:
+        take_reading()
+        time.sleep(1)
+except (KeyboardInterrupt, SystemExit):
+    print("Exiting...")
+    cleanAndExit()
