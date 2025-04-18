@@ -39,9 +39,9 @@ GYROSCOPE_I2C_ADDRESS = 0x68  # Default I2C address for MPU6050
 
 # --- Stability Thresholds (*** ADJUST THESE VALUES! ***) ---
 # Lower values mean it needs to be MORE still. Start higher and decrease.
-GYRO_THRESHOLD_X = 2.0  # Max degrees/second allowed on X-axis for stability
-GYRO_THRESHOLD_Y = 2.0  # Max degrees/second allowed on Y-axis for stability
-GYRO_THRESHOLD_Z = 2.0  # Max degrees/second allowed on Z-axis for stability
+GYRO_THRESHOLD_X = 4  # Max degrees/second allowed on X-axis for stability
+GYRO_THRESHOLD_Y = 4  # Max degrees/second allowed on Y-axis for stability
+GYRO_THRESHOLD_Z = 4  # Max degrees/second allowed on Z-axis for stability
 # --- OR ---
 # Optional: Use magnitude threshold instead of individual axes
 # GYRO_MAGNITUDE_THRESHOLD = 3.0 # Example: sqrt(gx^2 + gy^2 + gz^2) < threshold

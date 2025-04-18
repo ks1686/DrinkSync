@@ -53,7 +53,7 @@ and returns the calculated offset value.
     for i in range(samples):
         try:
             # Use get_raw_data_mean for tare to get value before offset subtraction
-            raw_reading = hx_instance.get_raw_data_mean(times=GET_WEIGHT_SAMPLES)
+            raw_reading = hx_instance.read_average(times=GET_WEIGHT_SAMPLES)
             if raw_reading is not False:  # Check for valid reading
                 readings.append(raw_reading)
                 print(f"  Tare sample {i + 1}/{samples}: {raw_reading}")
