@@ -42,7 +42,7 @@ def get_filtered_weight(samples=15):
 hx.reset()
 stable_tare()
 
-referenceUnit = 425.37 # Adjust this based on calibration
+referenceUnit = 425.37  # Adjust this based on calibration
 hx.set_reference_unit(referenceUnit)
 
 print("\nTare done! Ready to take readings...")
@@ -83,12 +83,11 @@ def take_reading():
         print(f"Error during reading: {e}")
         cleanAndExit()
 
-
-# loop to test readings
-try:
-    while True:
-        take_reading()
-        time.sleep(1)
-except (KeyboardInterrupt, SystemExit):
-    print("Exiting...")
-    cleanAndExit()
+# # loop to test readings
+# try:
+#     while True:
+#         take_reading()
+#         time.sleep(1)
+# except (KeyboardInterrupt, SystemExit):
+#     print("Exiting...")
+#     cleanAndExit()
