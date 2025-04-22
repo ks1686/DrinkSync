@@ -143,17 +143,20 @@ calculates the average weight, sends it via Bluetooth, and returns the weight.
         if initial_max_weight is not None:
             average_weight = initial_max_weight - average_weight
 
-        message = f"Average weight: {average_weight:.2f} grams"
+        message = f"Weight Differnce: {average_weight:.2f} grams"
+
+        # Do not send the message if (1) the weight is negative or (2) weight is higher than the initial max weight
+        if average_weight < 0 or (initial_max_weight is not None and average_weight > initial_max_weight):
+            print(f"Warning: Discarding message due to invalid weight: {average_weight:.2f} grams")
+            return None
+        
+        
 
         # Send the average weight as a message
         if send_message(message):
             print(f"Message sent successfully: {message}")
         else:
             print(f"Failed to send the message: {message}")
-
-        # Debugging info
-        # print(f"Raw Values Collected: {[f'{r:.2f}' for r in readings]}")
-        print(f"Calculated Average Weight: {average_weight:.2f} grams\n")
 
         # Power down the sensor to save power until the next reading
         # It will be powered up at the start of the next take_reading call
