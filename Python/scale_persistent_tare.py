@@ -150,6 +150,10 @@ calculates the average weight, sends it via Bluetooth, and returns the weight.
             print(f"Warning: Discarding message due to invalid weight: {average_weight:.2f} grams")
             return None
         
+        # Filter bad readings: don't send if weight difference is too small
+        if abs(average_weight) < 5: # Example threshold for small weight differences
+            print(f"Warning: Discarding message due to small weight difference: {average_weight:.2f} grams")
+            return None
         
 
         # Send the average weight as a message
@@ -271,7 +275,7 @@ else:
         # --- TAKE THE FIRST MEASUREMENT (Initial Max Weight) ---
         print("\nTaking initial 'max' measurement...")
         print("Ensure the item representing the maximum weight is on the scale NOW.")
-        time.sleep(5) # Give user a moment
+        time.sleep(10) # Give user a moment
 
         first_measurement_val = None
         try:
