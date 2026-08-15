@@ -1,6 +1,16 @@
-import bluetooth
+import os
+
+try:
+    import bluetooth
+except ImportError:
+    bluetooth = None
 
 ACK_TIMEOUT_S = 2.0
+DEFAULT_TARGET_ADDRESS = "08:8B:C8:32:4F:5F"
+
+
+def resolve_target_address():
+    return os.environ.get("DRINKSYNC_BT_MAC", DEFAULT_TARGET_ADDRESS)
 
 
 def send_message(message):
@@ -10,7 +20,11 @@ def send_message(message):
     Args:
         message (str): The message to send.
     """
-    target_address = "08:8B:C8:32:4F:5F"
+    if bluetooth is None:
+        print("PyBluez is not installed; cannot send Bluetooth messages.")
+        return False
+
+    target_address = resolve_target_address()
     service_uuid = "c7506ec6-09d3-4979-9db3-3b85acad20fd"  # same as the Android side
 
     service_matches = bluetooth.find_service(uuid=service_uuid, address=target_address)

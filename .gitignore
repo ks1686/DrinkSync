@@ -34,3 +34,9 @@ Android/google-services.json
 
 # MacOS files
 .DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
