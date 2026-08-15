@@ -1,5 +1,7 @@
 import bluetooth
 
+ACK_TIMEOUT_S = 2.0
+
 
 def send_message(message):
     """
@@ -16,21 +18,29 @@ def send_message(message):
     if len(service_matches) == 0:
         print("Could not find the DrinkSync service.")
         return False
-    else:
-        first_match = service_matches[0]
-        port = first_match["port"]
-        host = first_match["host"]
 
+    first_match = service_matches[0]
+    port = first_match["port"]
+    host = first_match["host"]
+    sock = None
+
+    try:
+        sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
+        sock.connect((host, port))
+        sock.settimeout(ACK_TIMEOUT_S)
+        sock.send(message)
         try:
-            sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
-            sock.connect((host, port))
-
-            # Send the message
-            sock.send(message)
             data = sock.recv(1024)
             print("Received:", data.decode())
-            sock.close()
-            return True
-        except Exception as e:
-            print(f"Error sending message: {e}")
-            return False
+        except OSError as e:
+            print(f"No ACK within {ACK_TIMEOUT_S:.0f}s (send still succeeded): {e}")
+        return True
+    except Exception as e:
+        print(f"Error sending message: {e}")
+        return False
+    finally:
+        if sock is not None:
+            try:
+                sock.close()
+            except Exception:
+                pass
