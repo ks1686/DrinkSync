@@ -84,6 +84,12 @@ class MainActivity : ComponentActivity() {
     // Nullable Int: null means no new data to process.
     private var intakeToAddFromBluetooth by mutableStateOf<Int?>(null)
 
+    @Volatile
+    private var serverRunning = false
+    private var serverThread: Thread? = null
+    private var listenSocket: BluetoothServerSocket? = null
+    private var activeClient: BluetoothSocket? = null
+
     @RequiresApi(Build.VERSION_CODES.O) // Required for NotificationChannel and java.time APIs
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -111,6 +117,21 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    override fun onDestroy() {
+        serverRunning = false
+        try {
+            activeClient?.close()
+        } catch (e: IOException) {
+            Log.e(TAG, "Error closing client socket: ${e.message}", e)
+        }
+        try {
+            listenSocket?.close()
+        } catch (e: IOException) {
+            Log.e(TAG, "Error closing server socket: ${e.message}", e)
+        }
+        super.onDestroy()
     }
 
     // Handles the result of permission requests
@@ -193,140 +214,112 @@ class MainActivity : ComponentActivity() {
 
     // Starts the Bluetooth server logic in a background thread
     private fun startServerInThread() {
+        if (serverThread?.isAlive == true) {
+            Log.d(TAG, "Bluetooth server thread already running.")
+            return
+        }
         Log.d(TAG, "Attempting to start Bluetooth server thread.")
-        // Basic check to avoid multiple threads; more robust checks might be needed
-        // if this function could be called multiple times rapidly.
-        Thread { startServer() }.start()
+        serverRunning = true
+        serverThread = Thread { startServer() }.also { it.start() }
     }
 
     // --- Bluetooth Server Logic ---
     private fun startServer() {
-        // Check adapter availability
         if (bluetoothAdapter == null) {
             Log.e(TAG, "Bluetooth is not supported on this device.")
             runOnUiThread { connectionStatus = "Bluetooth Not Supported" }
             return
         }
-        // Check if Bluetooth is enabled
         if (bluetoothAdapter?.isEnabled == false) {
             Log.w(TAG, "Bluetooth is disabled.")
             runOnUiThread { connectionStatus = "Bluetooth Disabled" }
-            // Consider prompting the user to enable Bluetooth:
-            // val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
-            // startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT) // Requires handling onActivityResult
+            return
+        }
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            Log.e(TAG, "BLUETOOTH_CONNECT permission missing in server thread!")
+            runOnUiThread { connectionStatus = "Permission Error (Thread)" }
             return
         }
 
-
-        var serverSocket: BluetoothServerSocket? = null
-        var clientSocket: BluetoothSocket? = null // Rename to avoid confusion with serverSocket
-
         Log.d(TAG, "Bluetooth server thread started.")
-
         try {
-            Log.i(TAG, "Attempting to create RFCOMM server socket...")
-            // Check permission right before creating the socket (important for thread safety)
-            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                Log.e(TAG, "BLUETOOTH_CONNECT permission missing in server thread!")
-                runOnUiThread { connectionStatus = "Permission Error (Thread)" }
-                return // Cannot proceed without permission
-            }
-
-            // Create a listening server socket
-            serverSocket = bluetoothAdapter?.listenUsingRfcommWithServiceRecord("DrinkSyncApp", MY_UUID)
-            Log.i(TAG, "Server socket created. Waiting for client connection...")
+            listenSocket = bluetoothAdapter?.listenUsingRfcommWithServiceRecord("DrinkSyncApp", MY_UUID)
             runOnUiThread { connectionStatus = "Listening..." }
-
-            // Blocking call: waits for a client to connect.
-            // This will throw an IOException if the socket is closed or an error occurs.
-            clientSocket = serverSocket?.accept()
-            Log.i(TAG, "Client connection accepted!")
-            runOnUiThread { connectionStatus = "Connected" }
-
-            // --- Connection Established ---
-            clientSocket?.also { socket -> // Use 'socket' for the connected client socket
-                val inputStream = socket.inputStream
-                val outputStream = socket.outputStream // For sending data back (optional)
-                val buffer = ByteArray(1024) // Buffer for reading data
-                var bytesRead: Int // Number of bytes read
-
-                Log.d(TAG, "Input/Output streams obtained. Starting read loop.")
-                // Loop to continuously read data from the client
-                try {
-                    while (true) {
-                        bytesRead = inputStream.read(buffer)
-                        if (bytesRead == -1) {
-                            // End of stream reached - client disconnected gracefully
-                            Log.i(TAG, "Input stream ended (bytesRead = -1). Client disconnected.")
-                            break // Exit the read loop
-                        }
-
-                        // Process the received data
-                        val incomingMessage = String(buffer, 0, bytesRead).trim()
-                        Log.d(TAG, "Received raw data: '$incomingMessage'")
-
-                        val grams = DrinkEvent.parseGrams(incomingMessage)
-                        if (grams != null) {
-                            val ozToAdd = DrinkEvent.gramsToOz(grams)
-                            Log.i(TAG, "Parsed $grams g -> $ozToAdd oz. Updating state.")
-
-                            runOnUiThread {
-                                intakeToAddFromBluetooth = ozToAdd
-                                connectionStatus = "Received $ozToAdd oz"
-                            }
-                            outputStream.write("OK\n".toByteArray())
-                        } else {
-                            Log.w(TAG, "Received message format mismatch: '$incomingMessage'")
-                        }
-
-                        // If expecting only one message per connection, uncomment break:
-                        // break
-                    } // End of while loop
+            while (serverRunning) {
+                val client = try {
+                    listenSocket?.accept()
                 } catch (e: IOException) {
-                    // Handle errors during reading (e.g., connection reset)
-                    Log.e(TAG, "IOException during inputStream.read: ${e.message}")
-                    runOnUiThread { connectionStatus = "Connection Lost" }
-                } finally {
-                    // Ensure the client socket is closed when done reading
-                    try {
-                        Log.d(TAG, "Closing client socket.")
-                        socket.close()
-                    } catch (e: IOException) {
-                        Log.e(TAG, "Error closing client socket: ${e.message}", e)
+                    if (serverRunning) {
+                        Log.e(TAG, "IOException accepting client: ${e.message}")
+                        runOnUiThread { connectionStatus = "Server Error" }
                     }
-                    // Update status if it wasn't already set to an error state
-                    if (connectionStatus == "Connected" || connectionStatus.startsWith("Received")) {
-                        runOnUiThread { connectionStatus = "Disconnected" }
-                    }
+                    break
+                } ?: break
+                activeClient = client
+                runOnUiThread { connectionStatus = "Connected" }
+                serveClient(client)
+                activeClient = null
+                if (serverRunning) {
+                    runOnUiThread { connectionStatus = "Listening..." }
                 }
-            } // End of clientSocket?.also
-
+            }
         } catch (e: SecurityException) {
-            // Handle permission errors during listen/accept (less likely if checked before)
             Log.e(TAG, "SecurityException in Bluetooth server: ${e.message}", e)
             runOnUiThread { connectionStatus = "Security Error" }
         } catch (e: IOException) {
-            // Handle errors during socket creation (listen) or connection acceptance (accept)
-            Log.e(TAG, "IOException in Bluetooth server setup/accept: ${e.message}", e)
+            Log.e(TAG, "IOException in Bluetooth server setup: ${e.message}", e)
             runOnUiThread { connectionStatus = "Server Error" }
-        } catch (e: Exception) {
-            // Catch any other unexpected errors
-            Log.e(TAG, "Unexpected error in Bluetooth server thread: ${e.message}", e)
-            runOnUiThread { connectionStatus = "Unknown Server Error" }
         } finally {
-            // Always attempt to close the server socket
             try {
-                serverSocket?.close()
-                Log.d(TAG, "Server socket closed.")
+                listenSocket?.close()
             } catch (e: IOException) {
                 Log.e(TAG, "Error closing server socket: ${e.message}", e)
             }
-            // Update status if connection was never made and no error occurred before
-            if (clientSocket == null && connectionStatus !in listOf("Listening...", "Connected", "Disconnected", "Connection Lost") && !connectionStatus.contains("Error") && !connectionStatus.contains("Permission")) {
+            listenSocket = null
+            if (serverRunning) {
                 runOnUiThread { connectionStatus = "Server Stopped / No Connection" }
             }
         }
-    } // --- End of startServer ---
+    }
+
+    private fun serveClient(socket: BluetoothSocket) {
+        val inputStream = socket.inputStream
+        val outputStream = socket.outputStream
+        val buffer = ByteArray(1024)
+        try {
+            while (serverRunning) {
+                val bytesRead = inputStream.read(buffer)
+                if (bytesRead == -1) {
+                    Log.i(TAG, "Client disconnected.")
+                    break
+                }
+                val incomingMessage = String(buffer, 0, bytesRead).trim()
+                Log.d(TAG, "Received raw data: '$incomingMessage'")
+                val grams = DrinkEvent.parseGrams(incomingMessage)
+                if (grams != null) {
+                    val ozToAdd = DrinkEvent.gramsToOz(grams)
+                    runOnUiThread {
+                        intakeToAddFromBluetooth = ozToAdd
+                        connectionStatus = "Received $ozToAdd oz"
+                    }
+                    outputStream.write("OK\n".toByteArray())
+                } else {
+                    Log.w(TAG, "Received message format mismatch: '$incomingMessage'")
+                }
+            }
+        } catch (e: IOException) {
+            if (serverRunning) {
+                Log.e(TAG, "IOException during inputStream.read: ${e.message}")
+                runOnUiThread { connectionStatus = "Connection Lost" }
+            }
+        } finally {
+            try {
+                socket.close()
+            } catch (e: IOException) {
+                Log.e(TAG, "Error closing client socket: ${e.message}", e)
+            }
+        }
+    }
 } // --- End of MainActivity ---
 
 
@@ -334,51 +327,48 @@ class MainActivity : ComponentActivity() {
 // ==                    SHARED PREFERENCES HELPER                        ==
 // =========================================================================
 
-class Prefs(context: Context) {
+class Prefs(context: Context) : PrefsLike {
     // Use application context to avoid memory leaks
     private val appContext = context.applicationContext
     private val prefs = appContext.getSharedPreferences("DrinkSyncPrefs", Context.MODE_PRIVATE)
 
-    // --- Save Methods ---
-    fun saveInt(key: String, value: Int) {
+    override fun saveInt(key: String, value: Int) {
         prefs.edit().putInt(key, value).apply()
     }
 
-    fun saveBoolean(key: String, value: Boolean) {
+    override fun saveBoolean(key: String, value: Boolean) {
         prefs.edit().putBoolean(key, value).apply()
     }
 
-    fun saveLong(key: String, value: Long) {
+    override fun saveLong(key: String, value: Long) {
         prefs.edit().putLong(key, value).apply()
     }
 
-    fun saveStringSet(key: String, value: Set<String>?) {
+    override fun saveStringSet(key: String, value: Set<String>?) {
         prefs.edit().putStringSet(key, value).apply()
     }
 
-    fun saveString(key: String, value: String?) {
+    override fun saveString(key: String, value: String?) {
         prefs.edit().putString(key, value).apply()
     }
 
-    // --- Get Methods ---
-    fun getInt(key: String, defaultValue: Int): Int {
+    override fun getInt(key: String, defaultValue: Int): Int {
         return prefs.getInt(key, defaultValue)
     }
 
-    fun getBoolean(key: String, defaultValue: Boolean): Boolean {
+    override fun getBoolean(key: String, defaultValue: Boolean): Boolean {
         return prefs.getBoolean(key, defaultValue)
     }
 
-    fun getLong(key: String, defaultValue: Long): Long {
+    override fun getLong(key: String, defaultValue: Long): Long {
         return prefs.getLong(key, defaultValue)
     }
 
-    fun getStringSet(key: String, defaultValue: Set<String>?): Set<String>? {
-        // Return a copy to prevent modification of the original set from prefs
+    override fun getStringSet(key: String, defaultValue: Set<String>?): Set<String>? {
         return prefs.getStringSet(key, defaultValue)?.toSet()
     }
 
-    fun getString(key: String, defaultValue: String?): String? {
+    override fun getString(key: String, defaultValue: String?): String? {
         return prefs.getString(key, defaultValue)
     }
 }
@@ -397,6 +387,7 @@ fun MainScreen(
 ) {
     val navController = rememberNavController()
     val context = LocalContext.current // Get context for child composables
+    val store = remember { HydrationStore(Prefs(context)) }
 
     Scaffold(
         // Bottom navigation bar
@@ -428,12 +419,13 @@ fun MainScreen(
                 composable("hydration") {
                     HydrationScreen(
                         context = context,
-                        intakeToAddFromBluetooth = intakeToAdd, // Pass down Bluetooth data
-                        onIntakeProcessed = onIntakeProcessed // Pass down reset callback
+                        store = store,
+                        intakeToAddFromBluetooth = intakeToAdd,
+                        onIntakeProcessed = onIntakeProcessed
                     )
                 }
-                composable("achievements") { AchievementScreen(context) }
-                composable("settings") { SettingsScreen(context) }
+                composable("achievements") { AchievementScreen(store) }
+                composable("settings") { SettingsScreen(context, store) }
             }
         }
     }
@@ -485,291 +477,75 @@ fun BottomNavigationBar(navController: NavHostController) {
 @Composable
 fun HydrationScreen(
     context: Context,
+    store: HydrationStore,
     intakeToAddFromBluetooth: Int?, // Intake amount from Bluetooth (oz)
     onIntakeProcessed: () -> Unit // Callback to reset the trigger
 ) {
-    // Remember an instance of the Prefs helper class
-    val prefs = remember { Prefs(context) }
-
-    // --- State Variables ---
-    // Daily goal (derived state to react to changes in Settings)
-    val dailyGoal by remember { derivedStateOf { prefs.getInt("dailyGoal", 64) } }
-    // Current intake for the day
-    var currentIntake by remember { mutableIntStateOf(prefs.getInt("currentIntake", 0)) }
-    // Text field state for manual intake editing
+    val state = store.snapshot
     var editIntake by remember { mutableStateOf("") }
-    // Flag for whether the daily goal has been hit today
-    var hasHitGoal by remember { mutableStateOf(prefs.getBoolean("hasHitGoal", false)) }
-    // Total intake accumulated over the app's lifetime
-    var totalIntake by remember { mutableIntStateOf(prefs.getInt("totalIntake", 0)) }
-    // Date of the last daily reset
-    var lastResetDate by remember { mutableStateOf(prefs.getString("lastResetDate", LocalDate.now(ZoneId.systemDefault()).toString())) }
-    // Current consecutive days streak of hitting the goal
-    var streak by remember { mutableIntStateOf(prefs.getInt("streak", 0)) }
-    // Whether notifications are enabled (reacts to Settings changes)
-    val notificationsEnabled by remember { derivedStateOf { prefs.getBoolean("notifications", true) } }
-    // Set of notification percentages already triggered today (loaded from prefs)
-    val notificationTriggers = remember {
-        mutableStateOf(prefs.getStringSet("notificationTriggers", emptySet())?.mapNotNull { it.toIntOrNull() }?.toMutableSet() ?: mutableSetOf())
-    }
 
-    // Achievement states (loaded from prefs)
-    var firstSip by remember { mutableStateOf(prefs.getBoolean("firstSip", false)) }
-    var halfwayToGoal by remember { mutableStateOf(prefs.getBoolean("halfwayToGoal", false)) }
-    var hydrationHero by remember { mutableStateOf(prefs.getBoolean("hydrationHero", false)) }
-    var bigGulp by remember { mutableStateOf(prefs.getBoolean("bigGulp", false)) }
-    var lateNightSip by remember { mutableStateOf(prefs.getBoolean("lateNightSip", false)) }
-    var earlyBirdDrinker by remember { mutableStateOf(prefs.getBoolean("earlyBirdDrinker", false)) }
-    // Note: Some achievements like "Quick Drink", "Frequent Hydrator", "Total Hydration Master"
-    // are checked directly in the AchievementScreen based on current state/time.
-
-    // --- Helper Functions ---
-
-    // Saves boolean value to SharedPreferences
-    fun saveBooleanPref(key: String, value: Boolean) {
-        prefs.saveBoolean(key, value)
-    }
-
-    // Saves integer value to SharedPreferences
-    fun saveIntPref(key: String, value: Int) {
-        prefs.saveInt(key, value)
-    }
-
-    // Saves string value to SharedPreferences
-    fun saveStringPref(key: String, value: String?) {
-        prefs.saveString(key, value)
-    }
-
-    // Saves Set<String> to SharedPreferences
-    fun saveStringSetPref(key: String, value: Set<String>?) {
-        prefs.saveStringSet(key, value)
-    }
-
-    // Sends progress notification if conditions are met
     fun sendProgressNotification(progressPercent: Int) {
-        if (!notificationsEnabled) {
-            Log.d(TAG, "Notifications disabled, skipping progress notification.")
-            return
-        }
-        // Check if notification permission is granted (important on Android 13+)
+        if (!state.notifications) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            Log.w(TAG, "Notification permission not granted, cannot send progress notification.")
             return
         }
-
-        val notificationId = 2 // Consistent ID for progress updates
-
-        val builder = NotificationCompat.Builder(context, "hydration_reminder")
-            .setSmallIcon(R.drawable.ic_launcher_foreground) // Replace with your actual icon
-            .setContentTitle("Hydration Update!")
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setAutoCancel(true) // Dismiss notification when tapped
-
         val contentText = when (progressPercent) {
             25 -> "Great job! You're 25% of the way to your goal."
             50 -> "You're halfway there! Keep hydrating!"
             100 -> "Congratulations! You've reached your hydration goal for today! 🎉"
-            else -> return // Only send for specific milestones
+            else -> return
         }
-
-        builder.setContentText(contentText)
-        // Use NotificationManagerCompat for broader compatibility
+        val builder = NotificationCompat.Builder(context, "hydration_reminder")
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("Hydration Update!")
+            .setContentText(contentText)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
         with(NotificationManagerCompat.from(context)) {
             try {
-                notify(notificationId, builder.build())
-                Log.i(TAG, "Sent progress notification for $progressPercent%")
+                notify(2, builder.build())
             } catch (e: SecurityException) {
-                // This can happen if permissions change unexpectedly
                 Log.e(TAG, "SecurityException sending notification: ${e.message}", e)
             }
         }
     }
 
+    fun maybeNotify(after: HydrationSnapshot) {
+        val goal = after.dailyGoal
+        if (goal <= 0) return
+        val progressPercent = (after.currentIntake.toFloat() / goal.toFloat() * 100).toInt()
+        listOf(25, 50, 100).forEach { milestone ->
+            if (progressPercent >= milestone && milestone !in after.notificationTriggers) {
+                sendProgressNotification(milestone)
+                store.markNotificationTrigger(milestone)
+            }
+        }
+    }
 
-    // Core logic for logging water intake and updating state/achievements
     fun logWaterIntake(amountToAddOz: Int) {
-        // Only update intake if amount is positive. Allow 0 for triggering checks after manual set.
-        if (amountToAddOz > 0) {
-            Log.d(TAG, "Logging $amountToAddOz oz intake.")
-            currentIntake += amountToAddOz
-            totalIntake += amountToAddOz
-            saveIntPref("currentIntake", currentIntake)
-            saveIntPref("totalIntake", totalIntake)
-        } else if (amountToAddOz == 0) {
-            Log.d(TAG, "logWaterIntake(0) called, performing checks only.")
-        } else {
-            return // Ignore negative amounts
-        }
-
-
-        // --- Update Achievement States ---
-        if (!firstSip && currentIntake > 0) { // Check currentIntake > 0 for first sip
-            firstSip = true
-            saveBooleanPref("firstSip", true)
-            Log.i(TAG, "Achievement unlocked: First Sip!")
-        }
-        val goal = dailyGoal // Use local val for checks
-        if (goal > 0) { // Avoid division by zero if goal is not set
-            if (currentIntake >= goal / 2 && !halfwayToGoal) {
-                halfwayToGoal = true
-                saveBooleanPref("halfwayToGoal", true)
-                Log.i(TAG, "Achievement unlocked: Halfway to Goal!")
-            } else if (currentIntake < goal / 2 && halfwayToGoal) {
-                // Reset if intake drops below threshold (e.g., manual edit)
-                halfwayToGoal = false
-                saveBooleanPref("halfwayToGoal", false)
-            }
-
-            if (currentIntake >= goal && !hydrationHero) {
-                hydrationHero = true
-                saveBooleanPref("hydrationHero", true)
-                Log.i(TAG, "Achievement unlocked: Hydration Hero!")
-            }
-        }
-
-        // Time-based achievements (only trigger if amount added > 0)
-        if (amountToAddOz > 0) {
-            val currentTime = LocalTime.now()
-            if (!lateNightSip && currentTime.hour >= 0 && currentTime.hour < 3) { // 12 AM to 2:59 AM
-                lateNightSip = true
-                saveBooleanPref("lateNightSip", true)
-                Log.i(TAG, "Achievement unlocked: Late Night Sip!")
-            }
-            if (!earlyBirdDrinker && currentTime.hour >= 5 && currentTime.hour < 7) { // 5 AM to 6:59 AM
-                earlyBirdDrinker = true
-                saveBooleanPref("earlyBirdDrinker", true)
-                Log.i(TAG, "Achievement unlocked: Early Bird Drinker!")
-            }
-        }
-
-
-        // Amount-based achievement (for the specific log action, only if > 0)
-        if (amountToAddOz >= 32 && !bigGulp) {
-            bigGulp = true
-            saveBooleanPref("bigGulp", true)
-            Log.i(TAG, "Achievement unlocked: Big Gulp!")
-        }
-
-        // Update daily goal hit status
-        val goalMet = if (goal > 0) currentIntake >= goal else false
-        if (goalMet != hasHitGoal) {
-            hasHitGoal = goalMet
-            saveBooleanPref("hasHitGoal", hasHitGoal)
-        }
-
-        // --- Check and Send Notifications ---
-        if (goal > 0) {
-            val progressPercent = (currentIntake.toFloat() / goal.toFloat() * 100).toInt()
-            val triggers = notificationTriggers.value.toMutableSet() // Work with a mutable copy
-            var triggerUpdated = false
-
-            if (progressPercent >= 25 && !triggers.contains(25)) {
-                sendProgressNotification(25)
-                triggers.add(25)
-                triggerUpdated = true
-            }
-            if (progressPercent >= 50 && !triggers.contains(50)) {
-                sendProgressNotification(50)
-                triggers.add(50)
-                triggerUpdated = true
-            }
-            if (progressPercent >= 100 && !triggers.contains(100)) {
-                sendProgressNotification(100)
-                triggers.add(100)
-                triggerUpdated = true
-            }
-
-            // Save updated triggers if any were added
-            if (triggerUpdated) {
-                notificationTriggers.value = triggers // Update the state
-                saveStringSetPref("notificationTriggers", triggers.map { it.toString() }.toSet())
-            }
-        }
-
-        // Clear manual edit field after logging or setting
+        store.addIntake(amountToAddOz)
+        maybeNotify(store.snapshot)
         editIntake = ""
     }
 
-
-    // Resets daily values (intake, goal status, triggers) and updates streak
-    fun resetDailyValues() {
-        Log.i(TAG, "Performing daily reset...")
-        val today = LocalDate.now(ZoneId.systemDefault())
-
-        // Update streak based on *yesterday's* goal status
-        if (hasHitGoal) {
-            streak += 1
-            Log.d(TAG, "Streak increased to $streak")
-        } else {
-            if (streak > 0) Log.d(TAG, "Streak reset from $streak")
-            streak = 0
-        }
-        saveIntPref("streak", streak)
-
-        // Reset daily counters and flags
-        currentIntake = 0
-        saveIntPref("currentIntake", 0)
-
-        hasHitGoal = false
-        saveBooleanPref("hasHitGoal", false)
-
-        halfwayToGoal = false // Reset daily achievement flags
-        saveBooleanPref("halfwayToGoal", false)
-        // Keep lifetime achievements like firstSip, bigGulp, etc.
-
-        // Reset notification triggers for the new day
-        notificationTriggers.value = mutableSetOf()
-        saveStringSetPref("notificationTriggers", emptySet())
-
-        // Update the last reset date
-        lastResetDate = today.toString()
-        saveStringPref("lastResetDate", lastResetDate)
-
-        Log.i(TAG, "Daily reset complete for $today. Current Intake: 0, Streak: $streak")
-    }
-
-
-    // --- Effects ---
-
-    // Effect to process intake data received from Bluetooth
     LaunchedEffect(intakeToAddFromBluetooth) {
         if (intakeToAddFromBluetooth != null && intakeToAddFromBluetooth > 0) {
-            Log.d(TAG, "LaunchedEffect triggered: Processing Bluetooth intake ($intakeToAddFromBluetooth oz)")
             logWaterIntake(intakeToAddFromBluetooth)
-            onIntakeProcessed() // IMPORTANT: Reset the trigger in MainActivity
+            onIntakeProcessed()
         }
     }
 
-    // Effect to check for daily reset when the app comes into the foreground
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, lastResetDate) { // Re-run if lastResetDate changes
+    DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                Log.d(TAG, "App resumed. Checking for daily reset needed.")
-                val today = LocalDate.now(ZoneId.systemDefault()).toString()
-                if (today != lastResetDate) {
-                    Log.i(TAG, "Date changed ($lastResetDate -> $today). Performing daily reset.")
-                    resetDailyValues()
-                } else {
-                    Log.d(TAG, "Date ($today) hasn't changed since last reset.")
-                    // Ensure notification triggers are loaded correctly on resume
-                    // (in case app was killed and state lost)
-                    val loadedTriggers = prefs.getStringSet("notificationTriggers", emptySet())?.mapNotNull { it.toIntOrNull() }?.toMutableSet() ?: mutableSetOf()
-                    if (notificationTriggers.value != loadedTriggers) {
-                        notificationTriggers.value = loadedTriggers
-                        Log.d(TAG, "Reloaded notification triggers from prefs.")
-                    }
-                }
+                store.applyDailyResetIfNeeded()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        // Cleanup observer when the effect leaves composition
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-
 
     // --- UI Layout ---
     Column(
@@ -782,7 +558,8 @@ fun HydrationScreen(
         Text("Stay Hydrated!", style = MaterialTheme.typography.headlineMedium) // Title
 
         // --- Progress Indicator ---
-        val goal = dailyGoal // Local val for calculations
+        val goal = state.dailyGoal
+        val currentIntake = state.currentIntake
         val progress = if (goal > 0) currentIntake.toFloat() / goal.toFloat() else 0f
         val cappedProgress = minOf(progress, 1f) // Cap progress at 100% for the bar
         // Change color when goal is exceeded
@@ -857,18 +634,9 @@ fun HydrationScreen(
                 onClick = {
                     val newIntake = editIntake.toIntOrNull()
                     if (newIntake != null && newIntake >= 0) {
-                        Log.d(TAG, "Manually setting intake to $newIntake oz")
-                        // Calculate difference for total intake adjustment
-                        val intakeDifference = newIntake - currentIntake
-                        // Update total intake before changing currentIntake
-                        totalIntake += intakeDifference
-                        saveIntPref("totalIntake", totalIntake)
-
-                        // Directly set current intake
-                        currentIntake = newIntake
-                        // Call logWaterIntake with 0 to trigger achievement/notification checks
-                        // without adding more oz to the already set value.
-                        logWaterIntake(0)
+                        store.setIntake(newIntake)
+                        maybeNotify(store.snapshot)
+                        editIntake = ""
                     }
                 },
                 // Enable button only if the input field contains a valid number
@@ -884,18 +652,16 @@ fun HydrationScreen(
 // --- Achievements Screen Composable ---
 @RequiresApi(Build.VERSION_CODES.O) // For java.time checks if needed
 @Composable
-fun AchievementScreen(context: Context) {
-    val prefs = remember { Prefs(context) }
-
-    // --- Achievement States (using derivedStateOf for reactivity) ---
-    val currentStreak by remember { derivedStateOf { prefs.getInt("streak", 0) } }
-    val firstSip by remember { derivedStateOf { prefs.getBoolean("firstSip", false) } }
-    val halfwayToGoal by remember { derivedStateOf { prefs.getBoolean("halfwayToGoal", false) } }
-    val hydrationHero by remember { derivedStateOf { prefs.getBoolean("hydrationHero", false) } }
-    val totalIntake by remember { derivedStateOf { prefs.getInt("totalIntake", 0) } }
-    val lateNightSip by remember { derivedStateOf { prefs.getBoolean("lateNightSip", false) } }
-    val earlyBirdDrinker by remember { derivedStateOf { prefs.getBoolean("earlyBirdDrinker", false) } }
-    val bigGulp by remember { derivedStateOf { prefs.getBoolean("bigGulp", false) } }
+fun AchievementScreen(store: HydrationStore) {
+    val state = store.snapshot
+    val currentStreak = state.streak
+    val firstSip = state.firstSip
+    val halfwayToGoal = state.halfwayToGoal
+    val hydrationHero = state.hydrationHero
+    val totalIntake = state.totalIntake
+    val lateNightSip = state.lateNightSip
+    val earlyBirdDrinker = state.earlyBirdDrinker
+    val bigGulp = state.bigGulp
 
     // Note: Some achievements might need more complex logic or state not easily derived here,
     // e.g., "Frequent Hydrator" would require tracking daily log counts,
@@ -1016,13 +782,9 @@ fun AchievementItem(achievementName: String, description: String, isAchieved: Bo
 
 // --- Settings Screen Composable ---
 @Composable
-fun SettingsScreen(context: Context) {
-    val prefs = remember { Prefs(context) }
-
-    // State for notification toggle
-    var notificationsEnabled by remember { mutableStateOf(prefs.getBoolean("notifications", true)) }
-    // State for daily goal text input
-    var dailyGoalText by remember { mutableStateOf(prefs.getInt("dailyGoal", 64).toString()) }
+fun SettingsScreen(context: Context, store: HydrationStore) {
+    val state = store.snapshot
+    var dailyGoalText by remember(state.dailyGoal) { mutableStateOf(state.dailyGoal.toString()) }
 
     Column(
         modifier = Modifier
@@ -1041,10 +803,9 @@ fun SettingsScreen(context: Context) {
         ) {
             Text("Enable Notifications", style = MaterialTheme.typography.bodyLarge)
             Switch(
-                checked = notificationsEnabled,
+                checked = state.notifications,
                 onCheckedChange = { newValue ->
-                    notificationsEnabled = newValue
-                    prefs.saveBoolean("notifications", newValue) // Save immediately
+                    store.setNotifications(newValue)
                     Log.d(TAG, "Notifications setting changed to: $newValue")
                 }
             )
@@ -1067,13 +828,9 @@ fun SettingsScreen(context: Context) {
                         dailyGoalText = text
                         // Save valid integer goals immediately
                         val newGoal = text.toIntOrNull()
-                        if (newGoal != null && newGoal > 0) {
-                            prefs.saveInt("dailyGoal", newGoal)
+                        if (newGoal != null) {
+                            store.setDailyGoal(newGoal)
                             Log.d(TAG, "Daily goal saved: $newGoal oz")
-                        } else if (newGoal == 0) {
-                            // Handle zero goal if necessary, maybe disable features?
-                            prefs.saveInt("dailyGoal", 0) // Save 0 if needed
-                            Log.d(TAG, "Daily goal saved as 0 oz")
                         }
                     }
                 },

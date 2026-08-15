@@ -1,6 +1,15 @@
-import RPi.GPIO as GPIO
 import time
 import threading
+
+try:
+    import RPi.GPIO as GPIO
+except ImportError:  # Allow parser/unit tests off-Pi
+    GPIO = None
+
+
+class Hx711TimeoutError(TimeoutError):
+    pass
+
 
 class HX711:
 
@@ -45,6 +54,13 @@ class HX711:
     
     def is_ready(self):
         return GPIO.input(self.DOUT) == 0
+
+    def _wait_ready(self, timeout_s=1.0):
+        deadline = time.monotonic() + timeout_s
+        while not self.is_ready():
+            if time.monotonic() >= deadline:
+                raise Hx711TimeoutError("HX711 DOUT did not go ready")
+            time.sleep(0.001)
 
     
     def set_gain(self, gain):
@@ -106,25 +122,15 @@ class HX711:
         # Wait for and get the Read Lock, in case another thread is already
         # driving the HX711 serial interface.
         self.readLock.acquire()
-
-        # Wait until HX711 is ready for us to read a sample.
-        while not self.is_ready():
-           pass
-
-        # Read three bytes of data from the HX711.
-        firstByte  = self.readNextByte()
-        secondByte = self.readNextByte()
-        thirdByte  = self.readNextByte()
-
-        # HX711 Channel and gain factor are set by number of bits read
-        # after 24 data bits.
-        for i in range(self.GAIN):
-           # Clock a bit out of the HX711 and throw it away.
-           self.readNextBit()
-
-        # Release the Read Lock, now that we've finished driving the HX711
-        # serial interface.
-        self.readLock.release()           
+        try:
+            self._wait_ready()
+            firstByte  = self.readNextByte()
+            secondByte = self.readNextByte()
+            thirdByte  = self.readNextByte()
+            for i in range(self.GAIN):
+               self.readNextBit()
+        finally:
+            self.readLock.release()           
 
         # Depending on how we're configured, return an ordered list of raw byte
         # values.
@@ -216,8 +222,8 @@ class HX711:
        else:
           # If times is even we have to take the arithmetic mean of
           # the two middle values.
-          midpoint = len(valueList) / 2
-          return sum(valueList[midpoint:midpoint+2]) / 2.0
+          midpoint = len(valueList) // 2
+          return sum(valueList[midpoint - 1:midpoint + 1]) / 2.0
 
 
     # Compatibility function, uses channel A version
@@ -359,7 +365,7 @@ class HX711:
 
 
     def get_reference_unit(self):
-        return get_reference_unit_A()
+        return self.get_reference_unit_A()
 
         
     def get_reference_unit_A(self):
@@ -416,7 +422,6 @@ class HX711:
         self.power_up()
 
 def hx711_add_event_detect(hx711_instance, event_callback):
-        GPIO.add_event_detect(self.DOUT, GPIO.FALLING, 
-            callback=event_callback)
+    GPIO.add_event_detect(hx711_instance.DOUT, GPIO.FALLING, callback=event_callback)
 
 # EOF - hx711.py

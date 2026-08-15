@@ -6,6 +6,7 @@ from hx711 import HX711
 # Assuming bt.py is in the same directory or accessible via PYTHONPATH
 from bt import send_message
 from protocol import format_weight_difference
+from scale_config import load_scale_config
 import json  # Needed for reading/writing config file
 import os   # Needed for checking if config file exists
 
@@ -194,15 +195,11 @@ if os.path.exists(CONFIG_FILE):
     try:
         with open(CONFIG_FILE, 'r') as f:
             config_data = json.load(f)
-            # Validate required keys exist
-            if 'offset' in config_data and 'referenceUnit' in config_data and 'initialMaxWeight' in config_data:
-                loaded_offset = config_data['offset']
-                loaded_reference_unit = config_data['referenceUnit']
-                # Load the initial max weight if it's a number, otherwise keep None
-                if isinstance(config_data['initialMaxWeight'], (int, float)):
-                    loaded_initial_max_weight = config_data['initialMaxWeight']
-                else:
-                    print("Warning: 'initialMaxWeight' in config is not a valid number. Will measure anew if tare is needed.")
+            loaded = load_scale_config(CONFIG_FILE)
+            if 'offset' in loaded and 'referenceUnit' in loaded:
+                loaded_offset = loaded['offset']
+                loaded_reference_unit = loaded['referenceUnit']
+                loaded_initial_max_weight = loaded.get('initialMaxWeight')
 
 
                 print("Successfully loaded configuration:")

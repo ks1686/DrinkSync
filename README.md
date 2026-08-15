@@ -32,6 +32,8 @@ cd Android
 
 Open the `Android/` project in Android Studio for the emulator, Bluetooth permissions, and on-device install. The app listens as an RFCOMM service named `DrinkSyncApp`.
 
+GitHub Actions runs `python -m unittest discover -v` and `./gradlew :app:testDebugUnitTest` on every push and pull request to `main`.
+
 ## Coaster / firmware helpers
 
 Production entrypoint (gyro stability, then a scale reading):
@@ -41,13 +43,13 @@ cd Python
 python3 stability_scale_trigger.py
 ```
 
-`scale.py` is a manual sender (its loop is commented out). `bt.py` opens the RFCOMM client; edit the phone MAC address in that file before running. `hx711.py` and `scale_persistent_tare.py` cover the load cell and persistent tare.
+`scale.py` is a manual sender (its loop is commented out). `bt.py` opens the RFCOMM client. Set `DRINKSYNC_BT_MAC` to your phone's Classic Bluetooth address (default is the address baked into `bt.py`). `hx711.py` and `scale_persistent_tare.py` cover the load cell and persistent tare. `scale_config.json` may omit `initialMaxWeight`; offset and reference unit are enough to load.
 
 Parser-only checks (no Pi hardware required):
 
 ```bash
 cd Python
-python3 -m unittest test_protocol.py -v
+python3 -m unittest discover -v
 ```
 
 ## Wire format (v1)
