@@ -5,6 +5,7 @@ import RPi.GPIO as GPIO
 from hx711 import HX711
 # Assuming bt.py is in the same directory or accessible via PYTHONPATH
 from bt import send_message
+from protocol import format_weight_difference
 import json  # Needed for reading/writing config file
 import os   # Needed for checking if config file exists
 
@@ -143,7 +144,7 @@ calculates the average weight, sends it via Bluetooth, and returns the weight.
         if initial_max_weight is not None:
             average_weight = initial_max_weight - average_weight
 
-        message = f"Weight Differnce: {average_weight:.2f} grams"
+        message = format_weight_difference(average_weight)
 
         # Do not send the message if (1) the weight is negative or (2) weight is higher than the initial max weight
         if average_weight < 0 or (initial_max_weight is not None and average_weight > initial_max_weight):

@@ -3,23 +3,23 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![IEEE](https://img.shields.io/badge/IEEE-11449671-00629B)](https://ieeexplore.ieee.org/document/11449671)
 
-Low-cost IoT smart coaster plus a Kotlin Android app for hydration tracking. The firmware streams drink events over BLE; the phone persists them locally and turns daily goals into something you can actually see.
+Low-cost IoT smart coaster plus a Kotlin Android app for hydration tracking. The Raspberry Pi streams drink events over Classic Bluetooth RFCOMM; the phone stores them in SharedPreferences and turns daily goals into something you can actually see.
 
-Co-authored [IEEE publication](https://ieeexplore.ieee.org/document/11449671). Rutgers Spring 2025 capstone.
+Co-authored [IEEE publication](https://ieeexplore.ieee.org/document/11449671). Rutgers Spring 2025 capstone. This tree is Classic Bluetooth RFCOMM, not the paper's BLE radio.
 
 ## What it does
 
 - Detects pours / sips from a load-cell coaster (HX711 + gyro for stability)
-- Sends events to the phone over Bluetooth Low Energy
-- Tracks daily intake in Room with gamified goals
+- Sends events to the phone over Classic Bluetooth RFCOMM/SPP
+- Tracks daily intake in SharedPreferences with gamified goals
 - Runs offline after pairing — no cloud account required
 
 ## Layout
 
 ```text
 DrinkSync/
-  Android/   Kotlin app (Compose, BLE, Room)
-  Python/    coaster firmware helpers (HX711, BLE, tare / stability)
+  Android/   Kotlin app (Compose, RFCOMM server, SharedPreferences)
+  Python/    CPython helpers for Raspberry Pi (HX711, RFCOMM, tare / stability)
 ```
 
 ## Android app
@@ -27,22 +27,51 @@ DrinkSync/
 ```bash
 cd Android
 ./gradlew :app:assembleDebug
+./gradlew :app:testDebugUnitTest
 ```
 
-Open the `Android/` project in Android Studio for the emulator, BLE permissions, and on-device install.
+Open the `Android/` project in Android Studio for the emulator, Bluetooth permissions, and on-device install. The app listens as an RFCOMM service named `DrinkSyncApp`.
 
 ## Coaster / firmware helpers
 
+Production entrypoint (gyro stability, then a scale reading):
+
 ```bash
 cd Python
-python3 scale.py
+python3 stability_scale_trigger.py
 ```
 
-`bt.py` handles the BLE side. `hx711.py` and `stability_scale_trigger.py` cover the load cell and motion filter.
+`scale.py` is a manual sender (its loop is commented out). `bt.py` opens the RFCOMM client; edit the phone MAC address in that file before running. `hx711.py` and `scale_persistent_tare.py` cover the load cell and persistent tare.
+
+Parser-only checks (no Pi hardware required):
+
+```bash
+cd Python
+python3 -m unittest test_protocol.py -v
+```
+
+## Wire format (v1)
+
+Transport: Classic Bluetooth RFCOMM/SPP.
+
+- Service name: `DrinkSyncApp`
+- UUID: `c7506ec6-09d3-4979-9db3-3b85acad20fd`
+
+One UTF-8 line per event, client to server:
+
+```text
+Weight difference: 12.50 grams
+```
+
+`<grams>` is estimated liquid removed from the cup. The phone converts grams to fluid ounces (`grams / 29.5735`, nearest int) and adds that to today's intake. `grams <= 0` is ignored.
+
+The phone still accepts two parse-only aliases so older senders keep working: `Average weight: <grams> grams` and the typo `Weight Differnce: <grams> grams`. Do not send those from new code.
+
+After a successfully parsed positive amount the phone writes `OK` plus a newline. On parse failure it writes nothing. The Pi uses a ~2s socket timeout and treats a completed send as success if the ACK never arrives.
 
 ## Stack
 
-**Kotlin** · Jetpack Compose · Room · BLE · Arduino / MicroPython · HX711
+**Kotlin** · Jetpack Compose · SharedPreferences · Classic Bluetooth RFCOMM · CPython · Raspberry Pi · HX711 · MPU6050
 
 ## License
 

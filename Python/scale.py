@@ -4,6 +4,7 @@ import numpy as np
 import RPi.GPIO as GPIO
 from hx711 import HX711
 from bt import send_message  # Import the send_message function
+from protocol import format_weight_difference
 
 
 def cleanAndExit():
@@ -64,11 +65,9 @@ def take_reading():
         # Calculate the average weight
         average_weight = np.mean(readings)
 
-        # Send the average weight as a message using the send_message function
-        if send_message(f"Average weight: {average_weight:.2f} grams"):
-            print(
-                f"Message sent successfully: Average weight: {average_weight:.2f} grams"
-            )
+        message = format_weight_difference(average_weight)
+        if send_message(message):
+            print(f"Message sent successfully: {message}")
         else:
             print("Failed to send the message.")
 

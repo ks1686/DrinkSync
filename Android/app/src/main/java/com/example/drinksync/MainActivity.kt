@@ -48,7 +48,6 @@ import androidx.compose.runtime.mutableStateOf // Ensure this is imported
 import androidx.compose.runtime.getValue // Ensure this is imported
 import androidx.compose.runtime.setValue // Ensure this is imported
 import java.io.IOException // Import IOException for catch block
-import kotlin.math.roundToInt // Import for rounding
 
 
 // Constant for Log Tag
@@ -66,9 +65,6 @@ class MainActivity : ComponentActivity() {
 
     // Request code for Bluetooth permissions
     private val REQUEST_BLUETOOTH_PERMISSION = 1
-
-    // Conversion Constant: Grams per Fluid Ounce
-    private val GRAMS_PER_OZ = 29.5735 // More precise value
 
     // Activity Result Launcher for Notification Permission
     private val requestNotificationPermissionLauncher =
@@ -225,9 +221,7 @@ class MainActivity : ComponentActivity() {
         var serverSocket: BluetoothServerSocket? = null
         var clientSocket: BluetoothSocket? = null // Rename to avoid confusion with serverSocket
 
-        // Regex to parse "Average weight: <number> grams"
-        val regex = """Average weight:\s*(\d+\.?\d*)\s*grams""".toRegex()
-        Log.d(TAG, "Bluetooth server thread started. Regex defined.")
+        Log.d(TAG, "Bluetooth server thread started.")
 
         try {
             Log.i(TAG, "Attempting to create RFCOMM server socket...")
@@ -271,35 +265,19 @@ class MainActivity : ComponentActivity() {
                         val incomingMessage = String(buffer, 0, bytesRead).trim()
                         Log.d(TAG, "Received raw data: '$incomingMessage'")
 
-                        // --- PARSING LOGIC ---
-                        val matchResult = regex.find(incomingMessage)
-                        if (matchResult != null) {
-                            val gramsString = matchResult.groupValues[1]
-                            val grams = gramsString.toDoubleOrNull()
+                        val grams = DrinkEvent.parseGrams(incomingMessage)
+                        if (grams != null) {
+                            val ozToAdd = DrinkEvent.gramsToOz(grams)
+                            Log.i(TAG, "Parsed $grams g -> $ozToAdd oz. Updating state.")
 
-                            if (grams != null && grams > 0) {
-                                // Valid grams value parsed
-                                val ozToAdd = (grams / GRAMS_PER_OZ).roundToInt()
-                                Log.i(TAG, "Parsed $grams g -> $ozToAdd oz. Updating state.")
-
-                                // Update the shared state on the UI thread
-                                runOnUiThread {
-                                    intakeToAddFromBluetooth = ozToAdd
-                                    connectionStatus = "Received $ozToAdd oz" // Update status
-                                    // Consider resetting status to "Connected" after a delay
-                                }
-                                // Optional: Send confirmation back
-                                // outputStream.write("OK $grams g\n".toByteArray())
-
-                            } else {
-                                Log.w(TAG, "Regex matched, but failed to parse valid grams from '$gramsString'")
-                                // outputStream.write("ERR Parse\n".toByteArray())
+                            runOnUiThread {
+                                intakeToAddFromBluetooth = ozToAdd
+                                connectionStatus = "Received $ozToAdd oz"
                             }
+                            outputStream.write("OK\n".toByteArray())
                         } else {
                             Log.w(TAG, "Received message format mismatch: '$incomingMessage'")
-                            // outputStream.write("ERR Format\n".toByteArray())
                         }
-                        // --- END PARSING ---
 
                         // If expecting only one message per connection, uncomment break:
                         // break
