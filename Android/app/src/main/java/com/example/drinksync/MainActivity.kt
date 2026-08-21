@@ -90,11 +90,12 @@ class MainActivity : ComponentActivity() {
     private var listenSocket: BluetoothServerSocket? = null
     private var activeClient: BluetoothSocket? = null
 
-    @RequiresApi(Build.VERSION_CODES.O) // Required for NotificationChannel and java.time APIs
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge() // Enable drawing behind system bars
-        createNotificationChannel() // Create notification channel on app start
+        enableEdgeToEdge()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            createNotificationChannel()
+        }
 
         // Request Notification Permission on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -371,6 +372,41 @@ class Prefs(context: Context) : PrefsLike {
 // ==                          COMPOSABLE SCREENS                         ==
 // =========================================================================
 
+private fun notifyHydrationMilestones(context: Context, store: HydrationStore) {
+    val after = store.snapshot
+    if (!after.notifications) return
+    val goal = after.dailyGoal
+    if (goal <= 0) return
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+    ) {
+        return
+    }
+    val progressPercent = (after.currentIntake.toFloat() / goal.toFloat() * 100).toInt()
+    listOf(25, 50, 100).forEach { milestone ->
+        if (progressPercent >= milestone && milestone !in after.notificationTriggers) {
+            val contentText = when (milestone) {
+                25 -> "Great job! You're 25% of the way to your goal."
+                50 -> "You're halfway there! Keep hydrating!"
+                100 -> "Congratulations! You've reached your hydration goal for today! 🎉"
+                else -> return@forEach
+            }
+            val builder = NotificationCompat.Builder(context, "hydration_reminder")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle("Hydration Update!")
+                .setContentText(contentText)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setAutoCancel(true)
+            try {
+                NotificationManagerCompat.from(context).notify(2, builder.build())
+            } catch (e: SecurityException) {
+                Log.e(TAG, "SecurityException sending notification: ${e.message}", e)
+            }
+            store.markNotificationTrigger(milestone)
+        }
+    }
+}
+
 // --- Main Screen Composable with Navigation ---
 @RequiresApi(Build.VERSION_CODES.O) // Needed for child composables
 @Composable
@@ -382,6 +418,28 @@ fun MainScreen(
     val navController = rememberNavController()
     val context = LocalContext.current // Get context for child composables
     val store = remember { HydrationStore(Prefs(context)) }
+
+    LaunchedEffect(incomingDrink) {
+        val grams = incomingDrink?.second
+        if (grams != null) {
+            if (grams > 0) {
+                store.addGrams(grams)
+                notifyHydrationMilestones(context, store)
+            }
+            onIntakeProcessed()
+        }
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                store.applyDailyResetIfNeeded()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     Scaffold(
         // Bottom navigation bar
@@ -414,8 +472,6 @@ fun MainScreen(
                     HydrationScreen(
                         context = context,
                         store = store,
-                        incomingDrink = incomingDrink,
-                        onIntakeProcessed = onIntakeProcessed
                     )
                 }
                 composable("achievements") { AchievementScreen(store) }
@@ -467,82 +523,18 @@ fun BottomNavigationBar(navController: NavHostController) {
 
 
 // --- Hydration Tracking Screen Composable ---
-@RequiresApi(Build.VERSION_CODES.O) // For java.time and NotificationChannel logic
 @Composable
 fun HydrationScreen(
     context: Context,
     store: HydrationStore,
-    incomingDrink: Pair<Long, Double>?,
-    onIntakeProcessed: () -> Unit
 ) {
     val state = store.snapshot
     var editIntake by remember { mutableStateOf("") }
 
-    fun sendProgressNotification(progressPercent: Int) {
-        if (!state.notifications) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            return
-        }
-        val contentText = when (progressPercent) {
-            25 -> "Great job! You're 25% of the way to your goal."
-            50 -> "You're halfway there! Keep hydrating!"
-            100 -> "Congratulations! You've reached your hydration goal for today! 🎉"
-            else -> return
-        }
-        val builder = NotificationCompat.Builder(context, "hydration_reminder")
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle("Hydration Update!")
-            .setContentText(contentText)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setAutoCancel(true)
-        with(NotificationManagerCompat.from(context)) {
-            try {
-                notify(2, builder.build())
-            } catch (e: SecurityException) {
-                Log.e(TAG, "SecurityException sending notification: ${e.message}", e)
-            }
-        }
-    }
-
-    fun maybeNotify(after: HydrationSnapshot) {
-        val goal = after.dailyGoal
-        if (goal <= 0) return
-        val progressPercent = (after.currentIntake.toFloat() / goal.toFloat() * 100).toInt()
-        listOf(25, 50, 100).forEach { milestone ->
-            if (progressPercent >= milestone && milestone !in after.notificationTriggers) {
-                sendProgressNotification(milestone)
-                store.markNotificationTrigger(milestone)
-            }
-        }
-    }
-
     fun logWaterIntake(amountToAddOz: Int) {
         store.addIntake(amountToAddOz)
-        maybeNotify(store.snapshot)
+        notifyHydrationMilestones(context, store)
         editIntake = ""
-    }
-
-    LaunchedEffect(incomingDrink) {
-        val grams = incomingDrink?.second
-        if (grams != null) {
-            if (grams > 0) {
-                store.addGrams(grams)
-                maybeNotify(store.snapshot)
-            }
-            onIntakeProcessed()
-        }
-    }
-
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                store.applyDailyResetIfNeeded()
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     // --- UI Layout ---
@@ -633,7 +625,7 @@ fun HydrationScreen(
                     val newIntake = editIntake.toIntOrNull()
                     if (newIntake != null && newIntake >= 0) {
                         store.setIntake(newIntake)
-                        maybeNotify(store.snapshot)
+                        notifyHydrationMilestones(context, store)
                         editIntake = ""
                     }
                 },

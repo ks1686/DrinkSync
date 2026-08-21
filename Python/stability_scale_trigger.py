@@ -46,15 +46,18 @@ GYRO_THRESHOLD_Z = 4  # Max degrees/second allowed on Z-axis for stability
 # --- Stability Duration ---
 STABILITY_DURATION_REQUIRED = 3.0  # seconds
 SAMPLE_INTERVAL = 0.1  # seconds between stability checks (10 Hz)
+AWAITING_MOTION_TIMEOUT_S = 20.0
 
 # --- State Variables ---
 stability_start_time = None  # Tracks when the current stable period began
 gyro_sensor = None  # Gyro sensor object
+awaiting_motion = False  # After a reading, wait for a lift before the next one
+awaiting_motion_since = None
 
 
 # --- Main Function ---
 def run_stability_monitor():
-    global stability_start_time, gyro_sensor
+    global stability_start_time, gyro_sensor, awaiting_motion, awaiting_motion_since
 
     # --- Pre-checks ---
     # 1. Verify Scale Initialized (hx object should exist from import)
@@ -126,7 +129,17 @@ def run_stability_monitor():
 
             # 3. Update Stability Timer and Trigger Scale Reading
             if is_stable_now:
-                if stability_start_time is None:
+                if awaiting_motion:
+                    if (
+                        awaiting_motion_since is not None
+                        and current_time - awaiting_motion_since >= AWAITING_MOTION_TIMEOUT_S
+                    ):
+                        awaiting_motion = False
+                        awaiting_motion_since = None
+                    else:
+                        # Cup is still sitting. Do not re-read until it is lifted.
+                        pass
+                elif stability_start_time is None:
                     # Just became stable
                     stability_start_time = current_time
                     print("\n--> Stable condition met. Starting timer...      ",
@@ -148,20 +161,23 @@ def run_stability_monitor():
                         else:
                             print("--- Scale Reading Failed (check scale script logs) ---")
 
-                        print("\nResuming stability monitoring...")
-                        # Reset timer to wait for the *next* stable period
+                        print("\nWaiting for the cup to move before the next reading...")
+                        awaiting_motion = True
+                        awaiting_motion_since = current_time
                         stability_start_time = None
-                        last_status_print_time = 0  # Force immediate status print update
-                        # Add a small pause after reading before resuming intense monitoring
+                        last_status_print_time = 0
                         time.sleep(0.5)
 
             else:  # Not stable now
-                if stability_start_time is not None:
-                    # Just became unstable
+                if awaiting_motion:
+                    print("\n--> Motion detected. Ready for the next sip.     ", end='\r')
+                elif stability_start_time is not None:
                     print("\n--> Unstable condition detected. Resetting timer...",
-                          end='\r')  # Extra spaces overwrite previous line
-                    stability_start_time = None  # Reset timer
-                    last_status_print_time = 0  # Force immediate status print update
+                          end='\r')
+                awaiting_motion = False
+                awaiting_motion_since = None
+                stability_start_time = None
+                last_status_print_time = 0
 
             # 4. Wait before next sample check
             time.sleep(SAMPLE_INTERVAL)

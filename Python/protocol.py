@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import re
 
 _CANONICAL = "Weight difference: {grams:.2f} grams"

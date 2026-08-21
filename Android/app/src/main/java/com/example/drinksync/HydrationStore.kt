@@ -53,6 +53,7 @@ class HydrationStore(
 
     fun addIntake(amountOz: Int) {
         if (amountOz <= 0) return
+        applyDailyResetIfNeeded()
         applyIntake(
             newCurrent = snapshot.currentIntake + amountOz,
             newTotal = snapshot.totalIntake + amountOz,
@@ -62,6 +63,7 @@ class HydrationStore(
 
     fun addGrams(grams: Double) {
         if (grams <= 0) return
+        applyDailyResetIfNeeded()
         val (ounces, leftover) = DrinkEvent.leftoverAfterAdding(snapshot.leftoverGrams, grams)
         persistLeftover(leftover)
         snapshot = snapshot.copy(leftoverGrams = leftover)
@@ -72,6 +74,7 @@ class HydrationStore(
 
     fun setIntake(newIntake: Int) {
         if (newIntake < 0) return
+        applyDailyResetIfNeeded()
         val delta = newIntake - snapshot.currentIntake
         applyIntake(
             newCurrent = newIntake,
@@ -158,7 +161,7 @@ class HydrationStore(
 
     private fun HydrationSnapshot.withGoalFlags(): HydrationSnapshot {
         val goal = dailyGoal
-        val halfway = if (goal > 0) currentIntake >= goal / 2 else false
+        val halfway = if (goal > 0) currentIntake * 2 >= goal else false
         val hit = if (goal > 0) currentIntake >= goal else false
         return copy(
             halfwayToGoal = halfway,
