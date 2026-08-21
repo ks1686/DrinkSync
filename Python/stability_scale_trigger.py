@@ -15,16 +15,13 @@ except ImportError:
 # Import functions from your scale script
 # Ensure scale_persistent_tare.py is in the same directory or PYTHONPATH
 try:
-    # We import 'hx' as well to check if it was initialized correctly
-    from scale_persistent_tare import take_reading, cleanAndExit, hx
+    import scale_persistent_tare as scale
 except ImportError:
     print("ERROR: Could not import from scale_persistent_tare.py.")
     print("Ensure the file exists and is in the correct path.")
     sys.exit(1)
 except Exception as e:
-    # Catch errors happening *during* the import/initialization of the scale script
     print(f"ERROR: An error occurred during import or initialization of the scale module: {e}")
-    # Attempt basic cleanup if possible, although scale's GPIO might not be setup
     try:
         import RPi.GPIO as GPIO
 
@@ -61,11 +58,10 @@ def run_stability_monitor():
 
     # --- Pre-checks ---
     # 1. Verify Scale Initialized (hx object should exist from import)
-    if hx is None:
-        print("ERROR: Scale HX711 object was not initialized correctly during import.")
+    if not scale.init_scale() or scale.hx is None:
+        print("ERROR: Scale HX711 object was not initialized correctly.")
         print("The scale_persistent_tare.py script might have failed.")
         print("Cannot proceed without a working scale.")
-        # No GPIO cleanup needed here as scale init failed before likely setup
         sys.exit(1)
     else:
         print("Scale module loaded and HX711 object appears initialized.")
@@ -81,7 +77,7 @@ def run_stability_monitor():
         print(f"FATAL ERROR: Failed to initialize MPU6050 sensor. Error: {e}")
         print("Check I2C connection, address (0x68 or 0x69?), and enable I2C in raspi-config.")
         # Attempt scale cleanup before exiting as scale *might* have initialized GPIO
-        cleanAndExit()
+        scale.cleanAndExit()
         sys.exit(1)
 
     # --- Monitoring Loop ---
@@ -144,7 +140,7 @@ def run_stability_monitor():
                         print("--- Triggering Scale Reading ---")
 
                         # === CALL SCALE READING FUNCTION ===
-                        weight = take_reading()  # Function from scale_persistent_tare.py
+                        weight = scale.take_reading()
                         # ===================================
 
                         if weight is not None:
@@ -187,5 +183,5 @@ if __name__ == "__main__":
         # raised an exception, or exited via break (like Ctrl+C).
         print("\nExecuting final cleanup...")
         # Call the cleanup function imported from the scale script
-        cleanAndExit()
+        scale.cleanAndExit()
         print("Script finished.")

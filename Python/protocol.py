@@ -12,6 +12,11 @@ def format_weight_difference(grams: float) -> str:
     return _CANONICAL.format(grams=grams)
 
 
+def encode_message(message: str) -> bytes:
+    text = message if message.endswith("\n") else message + "\n"
+    return text.encode("utf-8")
+
+
 def parse_weight_difference(message: str) -> float | None:
     match = _MESSAGE.match(message.strip())
     if match is None:

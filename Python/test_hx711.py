@@ -19,6 +19,12 @@ class Hx711PureHelpersTest(unittest.TestCase):
         hx.read_long = lambda: next(values)
         self.assertEqual(hx.read_median(4), 25.0)
 
+    def test_constructing_without_gpio_does_not_crash(self):
+        from hx711 import HX711
+
+        hx = HX711(5, 6)
+        self.assertEqual(hx.get_gain(), 128)
+
     def test_wait_ready_times_out(self):
         from hx711 import HX711, Hx711TimeoutError
 

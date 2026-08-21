@@ -22,6 +22,7 @@ object HydrationKeys {
     const val LATE_NIGHT_SIP = "lateNightSip"
     const val EARLY_BIRD = "earlyBirdDrinker"
     const val NOTIFICATION_TRIGGERS = "notificationTriggers"
+    const val LEFTOVER_GRAMS = "leftoverGrams"
 }
 
 data class HydrationSnapshot(
@@ -39,6 +40,7 @@ data class HydrationSnapshot(
     val lateNightSip: Boolean,
     val earlyBirdDrinker: Boolean,
     val notificationTriggers: Set<Int>,
+    val leftoverGrams: Double,
 )
 
 class HydrationStore(
@@ -58,17 +60,28 @@ class HydrationStore(
         )
     }
 
+    fun addGrams(grams: Double) {
+        if (grams <= 0) return
+        val (ounces, leftover) = DrinkEvent.leftoverAfterAdding(snapshot.leftoverGrams, grams)
+        persistLeftover(leftover)
+        snapshot = snapshot.copy(leftoverGrams = leftover)
+        if (ounces > 0) {
+            addIntake(ounces)
+        }
+    }
+
     fun setIntake(newIntake: Int) {
         if (newIntake < 0) return
         val delta = newIntake - snapshot.currentIntake
         applyIntake(
             newCurrent = newIntake,
-            newTotal = snapshot.totalIntake + delta,
+            newTotal = (snapshot.totalIntake + delta).coerceAtLeast(0),
             loggedAmount = 0,
         )
     }
 
     fun setDailyGoal(goal: Int) {
+        if (goal !in 1..500) return
         prefs.saveInt(HydrationKeys.DAILY_GOAL, goal)
         snapshot = snapshot.copy(dailyGoal = goal).withGoalFlags()
         persistGoalFlags(snapshot)
@@ -87,7 +100,13 @@ class HydrationStore(
 
     fun applyDailyResetIfNeeded() {
         val todayDate = today()
-        val last = snapshot.lastResetDate.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+        val stored = prefs.getString(HydrationKeys.LAST_RESET_DATE, null)
+        if (stored.isNullOrBlank()) {
+            prefs.saveString(HydrationKeys.LAST_RESET_DATE, todayDate.toString())
+            snapshot = snapshot.copy(lastResetDate = todayDate.toString())
+            return
+        }
+        val last = runCatching { LocalDate.parse(stored) }.getOrNull()
         if (last == null) {
             prefs.saveString(HydrationKeys.LAST_RESET_DATE, todayDate.toString())
             snapshot = snapshot.copy(lastResetDate = todayDate.toString())
@@ -148,6 +167,10 @@ class HydrationStore(
         )
     }
 
+    private fun persistLeftover(grams: Double) {
+        prefs.saveString(HydrationKeys.LEFTOVER_GRAMS, grams.toString())
+    }
+
     private fun persistGoalFlags(state: HydrationSnapshot) {
         prefs.saveBoolean(HydrationKeys.HAS_HIT_GOAL, state.hasHitGoal)
         prefs.saveBoolean(HydrationKeys.HALFWAY_TO_GOAL, state.halfwayToGoal)
@@ -162,7 +185,7 @@ class HydrationStore(
             dailyGoal = prefs.getInt(HydrationKeys.DAILY_GOAL, 64),
             hasHitGoal = prefs.getBoolean(HydrationKeys.HAS_HIT_GOAL, false),
             streak = prefs.getInt(HydrationKeys.STREAK, 0),
-            lastResetDate = prefs.getString(HydrationKeys.LAST_RESET_DATE, todayDate) ?: todayDate,
+            lastResetDate = prefs.getString(HydrationKeys.LAST_RESET_DATE, null) ?: todayDate,
             notifications = prefs.getBoolean(HydrationKeys.NOTIFICATIONS, true),
             firstSip = prefs.getBoolean(HydrationKeys.FIRST_SIP, false),
             halfwayToGoal = prefs.getBoolean(HydrationKeys.HALFWAY_TO_GOAL, false),
@@ -174,6 +197,7 @@ class HydrationStore(
                 ?.mapNotNull { it.toIntOrNull() }
                 ?.toSet()
                 ?: emptySet(),
+            leftoverGrams = prefs.getString(HydrationKeys.LEFTOVER_GRAMS, null)?.toDoubleOrNull() ?: 0.0,
         )
     }
 }

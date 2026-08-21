@@ -17,4 +17,11 @@ object DrinkEvent {
     }
 
     fun gramsToOz(grams: Double): Int = (grams / GRAMS_PER_OZ).roundToInt()
+
+    fun leftoverAfterAdding(existingLeftoverGrams: Double, addedGrams: Double): Pair<Int, Double> {
+        val total = existingLeftoverGrams + addedGrams
+        val ounces = gramsToOz(total)
+        if (ounces <= 0) return 0 to total
+        return ounces to (total - ounces * GRAMS_PER_OZ)
+    }
 }

@@ -1,5 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-        package="com.example.drinksync">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Required permissions for Bluetooth operations -->
     <uses-permission android:name="android.permission.BLUETOOTH" />

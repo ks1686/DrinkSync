@@ -1,73 +1,101 @@
 import time
 import sys
 import numpy as np
-import RPi.GPIO as GPIO
-from hx711 import HX711
-# Assuming bt.py is in the same directory or accessible via PYTHONPATH
+import os
+
 from bt import send_message
+from drink_math import next_drink
 from protocol import format_weight_difference
-from scale_config import load_scale_config
-import json  # Needed for reading/writing config file
-import os   # Needed for checking if config file exists
+from scale_config import load_scale_config, save_scale_config
+
+try:
+    import RPi.GPIO as GPIO
+except ImportError:
+    GPIO = None
+
+try:
+    from hx711 import HX711
+except ImportError:
+    HX711 = None
 
 # --- Configuration ---
-CONFIG_FILE = "scale_config.json"  # File to store/load scale settings
-DEFAULT_REFERENCE_UNIT = 425.37  # Adjust this based on your initial calibration
-STABLE_TARE_SAMPLES = 20  # Samples for the initial tare process
-GET_WEIGHT_SAMPLES = 5   # Samples per single weight reading (used in tare and take_reading)
-TAKE_READING_DURATION_S = 3  # Duration to average readings over in take_reading
-TAKE_READING_SAMPLE_DELAY = 0.1 # Delay between samples within take_reading
-DOUT_PIN = 5  # Data pin
-PD_SCK_PIN = 6  # Clock pin
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scale_config.json")
+DEFAULT_REFERENCE_UNIT = 425.37
+STABLE_TARE_SAMPLES = 20
+GET_WEIGHT_SAMPLES = 5
+TAKE_READING_DURATION_S = 3
+TAKE_READING_SAMPLE_DELAY = 0.1
+DOUT_PIN = 5
+PD_SCK_PIN = 6
 
-# --- Global HX711 Object ---
 hx = None
-# --- Global Variable for Initial Max Weight ---
-# This will store the first weight measured after configuration (either loaded or tared)
 initial_max_weight = None
+last_weight = None
+_initialized = False
 
-
-# --- Function Definitions ---
 
 def cleanAndExit():
     """Cleans up GPIO resources and exits."""
     print("\nCleaning up GPIO...")
-    # Optional: Try to power down the HX711 before cleaning GPIO
     try:
         if hx:
             hx.power_down()
     except Exception as e:
         print(f"  Warning: Could not power down HX711 during cleanup: {e}")
-    GPIO.cleanup()
+    if GPIO is not None:
+        try:
+            GPIO.cleanup()
+        except Exception as e:
+            print(f"  Warning: GPIO cleanup failed: {e}")
     print("Bye!")
     sys.exit()
 
 
+def persist_last_weight():
+    if last_weight is None:
+        return
+    config = {
+        "offset": hx.get_offset() if hx else None,
+        "referenceUnit": hx.get_reference_unit() if hx else None,
+        "initialMaxWeight": initial_max_weight,
+        "lastWeight": last_weight,
+    }
+    if os.path.exists(CONFIG_FILE):
+        try:
+            loaded = load_scale_config(CONFIG_FILE)
+            config["offset"] = loaded["offset"]
+            config["referenceUnit"] = loaded["referenceUnit"]
+            if config["initialMaxWeight"] is None:
+                config["initialMaxWeight"] = loaded["initialMaxWeight"]
+        except Exception:
+            pass
+    if config["offset"] is None or config["referenceUnit"] is None:
+        return
+    try:
+        save_scale_config(CONFIG_FILE, config)
+    except Exception as e:
+        print(f"Warning: Failed to persist last weight: {e}")
+
+
 def stable_tare(hx_instance, samples=STABLE_TARE_SAMPLES):
-    """
-Performs tare measurement, sets the offset on the hx_instance,
-and returns the calculated offset value.
-    """
+    """Tare the scale and return the calculated offset."""
     if not hx_instance:
         print("Error: HX711 instance not provided for tare.")
-        return None # Indicate failure
+        return None
 
     readings = []
     print("Taring... Please ensure scale is empty and stable.")
-    # Power cycle before tare might help stability
     try:
         hx_instance.power_down()
         hx_instance.power_up()
-        time.sleep(0.5) # Allow settle time
+        time.sleep(0.5)
     except Exception as e:
         print(f"  Warning: Error during power cycle before tare: {e}")
-        # Continue anyway, might still work
 
     for i in range(samples):
         try:
-            # Use read_average for tare to get value before offset subtraction
             raw_reading = hx_instance.read_average(times=GET_WEIGHT_SAMPLES)
-            if raw_reading is not False: # Check for valid reading
+            if raw_reading is not False:
                 readings.append(raw_reading)
                 print(f"  Tare sample {i+1}/{samples}: {raw_reading}")
             else:
@@ -75,56 +103,42 @@ and returns the calculated offset value.
             time.sleep(0.1)
         except Exception as e:
             print(f"  Error getting raw data during tare: {e}")
-            # Decide if you want to break or continue after an error
-            # break # uncomment to stop taring on first error
 
     if not readings:
         print("ERROR: Could not get any valid readings during tare. Cannot set offset.")
-        # Consider raising an error or returning a specific failure value
         return None
-    else:
-        # Use median for robustness against outliers
-        avg_tare_offset = np.median(readings)
 
+    avg_tare_offset = np.median(readings)
     hx_instance.set_offset(avg_tare_offset)
     print(f"Tare complete. Offset set to: {avg_tare_offset}")
-    time.sleep(0.5) # Short delay after setting offset
-    return avg_tare_offset # Return the calculated offset
+    time.sleep(0.5)
+    return avg_tare_offset
 
 
 def take_reading():
-    """
-Takes readings for a specified duration using the globally configured 'hx' object,
-calculates the average weight, sends it via Bluetooth, and returns the weight.
-    """
-    global hx # Access the global hx object
+    """Average the scale, send only the incremental sip, and return grams sent."""
+    global hx, last_weight
     if not hx:
         print("Error: Scale (hx) not initialized. Cannot take reading.")
-        return None # Indicate failure
+        return None
 
     try:
         start_time = time.time()
         readings = []
         print(f"Taking reading for {TAKE_READING_DURATION_S} seconds...")
 
-        # Power cycle before reading might improve consistency
         hx.power_down()
         hx.power_up()
-        time.sleep(0.1) # Allow time for power up
+        time.sleep(0.1)
 
-        # Collect readings for the specified duration
         while time.time() - start_time < TAKE_READING_DURATION_S:
             try:
-                # get_weight uses the offset and reference unit already set in 'hx'
                 val = hx.get_weight(GET_WEIGHT_SAMPLES)
-                # Basic check for unusually large values which might indicate errors
-                # Adjust the threshold based on expected weights
-                if val is not False and abs(val) < 100000: # Example threshold
+                if val is not False and abs(val) < 100000:
                     readings.append(val)
                 else:
                     print(f"  Warning: Discarding potentially erroneous reading: {val}")
-                # print(f"  Raw reading: {val:.2f}") # Uncomment for detailed debug
-                time.sleep(TAKE_READING_SAMPLE_DELAY) # Small delay
+                time.sleep(TAKE_READING_SAMPLE_DELAY)
             except OverflowError:
                 print("  Warning: Overflow error during reading, discarding value.")
             except Exception as e:
@@ -132,225 +146,183 @@ calculates the average weight, sends it via Bluetooth, and returns the weight.
 
         if not readings:
             print("Error: No valid readings collected.")
-            # Optional: power down hx here if desired after failed reading
-            # hx.power_down()
             return None
 
-        # Calculate the average weight using median for noise reduction
-        average_weight = np.median(readings)
+        current_weight = float(np.median(readings))
+        grams, new_previous = next_drink(last_weight, current_weight)
 
-        # Prepare message
-
-        # set average_weight to initial minus average_weight
-        if initial_max_weight is not None:
-            average_weight = initial_max_weight - average_weight
-
-        message = format_weight_difference(average_weight)
-
-        # Do not send the message if (1) the weight is negative or (2) weight is higher than the initial max weight
-        if average_weight < 0 or (initial_max_weight is not None and average_weight > initial_max_weight):
-            print(f"Warning: Discarding message due to invalid weight: {average_weight:.2f} grams")
+        if grams is None:
+            last_weight = new_previous
+            persist_last_weight()
+            print(
+                f"No drink event (current={current_weight:.2f} g, baseline={last_weight:.2f} g)"
+            )
+            hx.power_down()
             return None
-        
-        # Filter bad readings: don't send if weight difference is too small
-        if abs(average_weight) < 5: # Example threshold for small weight differences
-            print(f"Warning: Discarding message due to small weight difference: {average_weight:.2f} grams")
-            return None
-        
 
-        # Send the average weight as a message
+        if initial_max_weight is not None and grams > initial_max_weight:
+            print(
+                f"Warning: Discarding implausible drink {grams:.2f} g "
+                f"(above max {initial_max_weight:.2f} g)"
+            )
+            hx.power_down()
+            return None
+
+        message = format_weight_difference(grams)
         if send_message(message):
+            last_weight = new_previous
+            persist_last_weight()
             print(f"Message sent successfully: {message}")
         else:
             print(f"Failed to send the message: {message}")
+            hx.power_down()
+            return None
 
-        # Power down the sensor to save power until the next reading
-        # It will be powered up at the start of the next take_reading call
         hx.power_down()
-
-        return average_weight # Return the calculated weight
+        return grams
 
     except Exception as e:
         print(f"Error during take_reading: {e}")
-        # Attempt to power down even on error
         try:
-            if hx: hx.power_down()
-        except:
-            pass # Ignore errors during power down in cleanup
-        # Consider calling cleanAndExit() or raising the exception
-        return None # Indicate failure
+            if hx:
+                hx.power_down()
+        except Exception:
+            pass
+        return None
 
 
-# --- Initialization Code (Runs ONCE when script is imported or executed) ---
+def init_scale():
+    """Initialize HX711 from saved config, or tare on first run."""
+    global hx, initial_max_weight, last_weight, _initialized
+    if _initialized:
+        return hx is not None
+    _initialized = True
 
-print("--- Initializing Scale ---")
-config_loaded_successfully = False
-loaded_offset = None
-loaded_reference_unit = None
-loaded_initial_max_weight = None # Variable to store loaded max weight
+    if GPIO is None or HX711 is None:
+        print("ERROR: Raspberry Pi GPIO / HX711 is not available on this machine.")
+        return False
 
-# 1. Check for and load existing configuration file
-if os.path.exists(CONFIG_FILE):
-    print(f"Found configuration file: {CONFIG_FILE}")
-    try:
-        with open(CONFIG_FILE, 'r') as f:
-            config_data = json.load(f)
+    print("--- Initializing Scale ---")
+    config_loaded_successfully = False
+    loaded_offset = None
+    loaded_reference_unit = None
+    loaded_initial_max_weight = None
+    loaded_last_weight = None
+
+    if os.path.exists(CONFIG_FILE):
+        print(f"Found configuration file: {CONFIG_FILE}")
+        try:
             loaded = load_scale_config(CONFIG_FILE)
-            if 'offset' in loaded and 'referenceUnit' in loaded:
-                loaded_offset = loaded['offset']
-                loaded_reference_unit = loaded['referenceUnit']
-                loaded_initial_max_weight = loaded.get('initialMaxWeight')
+            loaded_offset = loaded["offset"]
+            loaded_reference_unit = loaded["referenceUnit"]
+            loaded_initial_max_weight = loaded.get("initialMaxWeight")
+            loaded_last_weight = loaded.get("lastWeight")
+            print("Successfully loaded configuration:")
+            print(f"  Offset: {loaded_offset}")
+            print(f"  Reference Unit: {loaded_reference_unit}")
+            if loaded_initial_max_weight is not None:
+                print(f"  Initial Max Weight: {loaded_initial_max_weight:.2f} grams")
+            if loaded_last_weight is not None:
+                print(f"  Last weight: {loaded_last_weight:.2f} grams")
+            config_loaded_successfully = True
+        except Exception as e:
+            print(f"Warning: Error reading config file '{CONFIG_FILE}'. Error: {e}")
+            print("Ignoring invalid or incomplete config file. Will perform tare.")
 
-
-                print("Successfully loaded configuration:")
-                print(f"  Offset: {loaded_offset}")
-                print(f"  Reference Unit: {loaded_reference_unit}")
-                if loaded_initial_max_weight is not None:
-                    print(f"  Initial Max Weight: {loaded_initial_max_weight:.2f} grams")
-                else:
-                    print("  Initial Max Weight: Not found or invalid in config.")
-                config_loaded_successfully = True
-            else:
-                print("Warning: Config file is missing 'offset', 'referenceUnit', or 'initialMaxWeight'.")
-    except json.JSONDecodeError:
-        print(f"Warning: Config file '{CONFIG_FILE}' contains invalid JSON.")
+    try:
+        hx = HX711(DOUT_PIN, PD_SCK_PIN)
+        hx.set_reading_format("MSB", "MSB")
+        print("HX711 sensor initialized.")
     except Exception as e:
-        print(f"Warning: Error reading config file '{CONFIG_FILE}'. Error: {e}")
+        print(f"FATAL ERROR: Failed to initialize HX711 sensor. Error: {e}")
+        print("Check GPIO connections, permissions, and numbering scheme (BCM).")
+        if GPIO is not None:
+            GPIO.cleanup()
+        hx = None
+        return False
 
-    if not config_loaded_successfully:
-        print("Ignoring invalid or incomplete config file. Will perform tare.")
-        # Optional: you could attempt to delete the bad file here
-        # try: os.remove(CONFIG_FILE) except OSError: pass
-
-# 2. Initialize the HX711 Sensor
-try:
-    # Set GPIO mode BEFORE initializing HX711 if not done elsewhere
-    # Choose BCM or BOARD consistently
-    # GPIO.setmode(GPIO.BCM) # Example: Use Broadcom pin numbering
-
-    hx = HX711(DOUT_PIN, PD_SCK_PIN)
-    # Set byte order and bit order (MUST be done before reading/setting offset/taring)
-    hx.set_reading_format("MSB", "MSB")
-    print("HX711 sensor initialized.")
-
-except Exception as e:
-    print(f"FATAL ERROR: Failed to initialize HX711 sensor. Error: {e}")
-    print("Check GPIO connections, permissions, and chosen numbering scheme (BCM/BOARD).")
-    GPIO.cleanup() # Attempt basic cleanup
-    sys.exit(1) # Exit script if sensor fails
-
-# 3. Configure HX711: Use loaded values or perform tare
-if config_loaded_successfully and loaded_offset is not None and loaded_reference_unit is not None:
-    # Apply the loaded settings
-    print("Applying loaded offset and reference unit...")
-    hx.set_offset(loaded_offset)
-    hx.set_reference_unit(loaded_reference_unit)
-    # Assign the loaded max weight to the global variable
-    initial_max_weight = loaded_initial_max_weight
-    # Perform a power cycle after applying settings might be good practice
-    hx.power_down()
-    hx.power_up()
-    time.sleep(0.5)
-    print("Scale configured using saved settings.")
-    if initial_max_weight is not None:
-         print(f"Using saved Initial Max Weight: {initial_max_weight:.2f} grams")
-    else:
-         print("Warning: Could not use saved Initial Max Weight (missing or invalid).")
-
-else:
-    # Perform initial tare and save the configuration
-    print("No valid configuration found or loaded. Performing initial tare...")
-    hx.reset() # Reset the chip before taring
-    calculated_offset = stable_tare(hx) # This also sets the offset on hx
-
-    if calculated_offset is not None:
-        # Use the default reference unit for the first time
-        # (Or implement a calibration step here if needed)
-        current_reference_unit = DEFAULT_REFERENCE_UNIT
-        hx.set_reference_unit(current_reference_unit)
-        print(f"Reference unit set to default: {current_reference_unit}")
-
-        # --- TAKE THE FIRST MEASUREMENT (Initial Max Weight) ---
-        print("\nTaking initial 'max' measurement...")
-        print("Ensure the item representing the maximum weight is on the scale NOW.")
-        time.sleep(10) # Give user a moment
-
-        first_measurement_val = None
-        try:
-            # Power cycle before critical measurement
-            hx.power_down()
-            hx.power_up()
-            time.sleep(0.5) # Allow settle time
-            # Get a single, averaged reading using the new settings
-            first_measurement_val = hx.get_weight(GET_WEIGHT_SAMPLES)
-            # Check if the reading is valid
-
-            if first_measurement_val is not False:
-                initial_max_weight = first_measurement_val # Store globally
-                print(f"Initial 'max' weight measured: {initial_max_weight:.2f} grams")
-            else:
-                print("Warning: Failed to get valid initial 'max' weight reading.")
-                initial_max_weight = None # Explicitly set to None on failure
-
-        except Exception as e:
-            print(f"ERROR: Could not take initial 'max' weight measurement: {e}")
-            initial_max_weight = None # Set to None on error
-
-        # --- Save Configuration (including the initial max weight) ---
-        print(f"Saving configuration to {CONFIG_FILE}...")
-        try:
-            config_data_to_save = {
-                'offset': calculated_offset,
-                'referenceUnit': current_reference_unit,
-                'initialMaxWeight': initial_max_weight # Save the measured value (or None if failed)
-            }
-            with open(CONFIG_FILE, 'w') as f:
-                json.dump(config_data_to_save, f, indent=4)
-            print("Configuration saved successfully.")
-        except Exception as e:
-            print(f"Warning: Failed to save configuration to {CONFIG_FILE}. Error: {e}")
-
-        # Power down after initial measurement if desired
+    if config_loaded_successfully and loaded_offset is not None and loaded_reference_unit is not None:
+        print("Applying loaded offset and reference unit...")
+        hx.set_offset(loaded_offset)
+        hx.set_reference_unit(loaded_reference_unit)
+        initial_max_weight = loaded_initial_max_weight
+        last_weight = loaded_last_weight
         hx.power_down()
-
+        hx.power_up()
+        time.sleep(0.5)
+        print("Scale configured using saved settings.")
     else:
-        print("ERROR: Tare process failed. Scale may not read accurately.")
-        # Decide how to proceed - exit or continue with potentially bad readings?
-        # For now, we'll try setting a default reference unit anyway but skip max reading/saving
-        hx.set_reference_unit(DEFAULT_REFERENCE_UNIT)
-        initial_max_weight = None # Ensure it's None if tare failed
+        print("No valid configuration found or loaded. Performing initial tare...")
+        hx.reset()
+        calculated_offset = stable_tare(hx)
 
-# Final check after initialization logic
-print("\n--- Scale Ready ---")
-if initial_max_weight is not None:
-    print(f"Current Initial Max Weight set to: {initial_max_weight:.2f} grams")
-else:
-    print("Initial Max Weight is not set (check logs for errors).")
+        if calculated_offset is not None:
+            current_reference_unit = DEFAULT_REFERENCE_UNIT
+            hx.set_reference_unit(current_reference_unit)
+            print(f"Reference unit set to default: {current_reference_unit}")
 
-# --- Example Usage (if running this script directly) ---
+            print("\nTaking initial 'max' measurement...")
+            print("Ensure the item representing the maximum weight is on the scale NOW.")
+            time.sleep(10)
+
+            try:
+                hx.power_down()
+                hx.power_up()
+                time.sleep(0.5)
+                first_measurement_val = hx.get_weight(GET_WEIGHT_SAMPLES)
+                if first_measurement_val is not False:
+                    initial_max_weight = first_measurement_val
+                    last_weight = first_measurement_val
+                    print(f"Initial 'max' weight measured: {initial_max_weight:.2f} grams")
+                else:
+                    print("Warning: Failed to get valid initial 'max' weight reading.")
+                    initial_max_weight = None
+            except Exception as e:
+                print(f"ERROR: Could not take initial 'max' weight measurement: {e}")
+                initial_max_weight = None
+
+            print(f"Saving configuration to {CONFIG_FILE}...")
+            try:
+                save_scale_config(
+                    CONFIG_FILE,
+                    {
+                        "offset": calculated_offset,
+                        "referenceUnit": current_reference_unit,
+                        "initialMaxWeight": initial_max_weight,
+                        "lastWeight": last_weight,
+                    },
+                )
+                print("Configuration saved successfully.")
+            except Exception as e:
+                print(f"Warning: Failed to save configuration to {CONFIG_FILE}. Error: {e}")
+
+            hx.power_down()
+        else:
+            print("ERROR: Tare process failed. Scale may not read accurately.")
+            hx.set_reference_unit(DEFAULT_REFERENCE_UNIT)
+            initial_max_weight = None
+
+    print("\n--- Scale Ready ---")
+    if initial_max_weight is not None:
+        print(f"Current Initial Max Weight set to: {initial_max_weight:.2f} grams")
+    else:
+        print("Initial Max Weight is not set (optional).")
+    return True
+
+
 if __name__ == "__main__":
     print("\nRunning direct execution test loop...")
     try:
+        if not init_scale():
+            sys.exit(1)
         while True:
             input("Press Enter to take a reading (or Ctrl+C to exit)...")
             weight = take_reading()
             if weight is not None:
-                print(f"--> Reading Result: {weight:.2f} grams")
-                # Example: Calculate percentage relative to initial max weight
-                if initial_max_weight is not None and initial_max_weight != 0:
-                    percentage = (weight / initial_max_weight) * 100
-                    print(f"--> Approximately {percentage:.1f}% of initial max weight.")
-                elif initial_max_weight == 0:
-                     print("--> Cannot calculate percentage, initial max weight is zero.")
-                else:
-                     print("--> Cannot calculate percentage, initial max weight not set.")
-
+                print(f"--> Drink sent: {weight:.2f} grams")
             else:
-                print("--> Failed to get reading.")
-            # No need for extra sleep if take_reading already powers down
-            # time.sleep(1) # Wait a second before next prompt
+                print("--> No drink sent.")
     except (KeyboardInterrupt, SystemExit):
         print("\nExit requested.")
     finally:
-        # Ensure cleanup is called when the script exits
         cleanAndExit()

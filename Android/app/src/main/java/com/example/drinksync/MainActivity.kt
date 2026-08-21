@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
 import android.content.Context
@@ -30,24 +31,21 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import androidx.navigation.NavHostController
-import androidx.navigation.compose.*
-import com.example.drinksync.ui.theme.DrinkSyncTheme
-import java.time.LocalTime
-import java.time.LocalDate
-import java.time.ZoneId
-import java.util.UUID
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.compose.runtime.mutableStateOf // Ensure this is imported
-import androidx.compose.runtime.getValue // Ensure this is imported
-import androidx.compose.runtime.setValue // Ensure this is imported
-import java.io.IOException // Import IOException for catch block
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import com.example.drinksync.ui.theme.DrinkSyncTheme
+import java.io.IOException
+import java.nio.charset.StandardCharsets
+import java.util.UUID
 
 
 // Constant for Log Tag
@@ -57,32 +55,34 @@ class MainActivity : ComponentActivity() {
 
     // Lazy initialization of BluetoothAdapter
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
-        BluetoothAdapter.getDefaultAdapter()
+        (getSystemService(BLUETOOTH_SERVICE) as BluetoothManager).adapter
     }
 
     // Unique UUID for the Bluetooth service
     private val MY_UUID: UUID = UUID.fromString("c7506ec6-09d3-4979-9db3-3b85acad20fd") // Replace with your unique UUID
 
-    // Request code for Bluetooth permissions
-    private val REQUEST_BLUETOOTH_PERMISSION = 1
+    private val requestBluetoothPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            if (hasBluetoothConnectPermission()) {
+                startServerInThread()
+            } else {
+                Log.w(TAG, "Bluetooth permission denied.")
+                connectionStatus = "Bluetooth permissions are required."
+            }
+        }
 
-    // Activity Result Launcher for Notification Permission
     private val requestNotificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
             if (isGranted) {
                 Log.d(TAG, "Notification permission granted")
             } else {
                 Log.w(TAG, "Notification permission denied")
-                // Optionally inform the user why notifications are useful
             }
         }
 
-    // State variable for displaying Bluetooth connection status
     private var connectionStatus by mutableStateOf("Not Connected")
-
-    // State variable to hold the amount of water intake received via Bluetooth (in ounces)
-    // Nullable Int: null means no new data to process.
-    private var intakeToAddFromBluetooth by mutableStateOf<Int?>(null)
+    private var incomingDrink by mutableStateOf<Pair<Long, Double>?>(null)
+    private var incomingDrinkSeq = 0L
 
     @Volatile
     private var serverRunning = false
@@ -112,8 +112,8 @@ class MainActivity : ComponentActivity() {
                 // the intake amount from Bluetooth, and a function to reset the intake amount.
                 MainScreen(
                     connectionStatus = connectionStatus,
-                    intakeToAdd = intakeToAddFromBluetooth,
-                    onIntakeProcessed = { intakeToAddFromBluetooth = null } // Lambda to reset the trigger
+                    incomingDrink = incomingDrink,
+                    onIntakeProcessed = { incomingDrink = null }
                 )
             }
         }
@@ -134,63 +134,37 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    // Handles the result of permission requests
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        when (requestCode) {
-            REQUEST_BLUETOOTH_PERMISSION -> {
-                // Check if BLUETOOTH_CONNECT permission was granted (most critical one for server)
-                val connectPermissionIndex = permissions.indexOf(Manifest.permission.BLUETOOTH_CONNECT)
-                if (connectPermissionIndex != -1 && grantResults.getOrNull(connectPermissionIndex) == PackageManager.PERMISSION_GRANTED) {
-                    Log.i(TAG, "Bluetooth Connect permission granted.")
-                    startServerInThread() // Start the server thread now that permission is granted
-                } else {
-                    Log.w(TAG, "Bluetooth Connect permission denied.")
-                    // Update status and inform the user
-                    connectionStatus = "Bluetooth permissions are required."
-                    // Consider showing a dialog explaining why permissions are needed
-                    // and potentially directing the user to settings.
-                }
-                return // Exit after handling this request code
-            }
-            // Handle other permission request codes if needed
+    private fun bluetoothPermissions(): Array<String> {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_CONNECT,
+            )
+        } else {
+            arrayOf(Manifest.permission.BLUETOOTH, Manifest.permission.BLUETOOTH_ADMIN)
         }
     }
 
-    // Checks current Bluetooth permissions and requests them if missing
-    private fun checkAndRequestBluetoothPermissions() {
-        // Required permissions vary slightly by Android version
-        val requiredPermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // Android 12 (API 31) and above require BLUETOOTH_SCAN and BLUETOOTH_CONNECT
-            arrayOf(
-                Manifest.permission.BLUETOOTH_SCAN,
-                Manifest.permission.BLUETOOTH_CONNECT
-            )
+    private fun hasBluetoothConnectPermission(): Boolean {
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Manifest.permission.BLUETOOTH_CONNECT
         } else {
-            // Older versions might need BLUETOOTH and BLUETOOTH_ADMIN,
-            // but BLUETOOTH_CONNECT implies server functionality. Check specific needs.
-            // For simplicity, focusing on modern requirements. Add older ones if targeting lower APIs.
-            arrayOf(Manifest.permission.BLUETOOTH, Manifest.permission.BLUETOOTH_ADMIN) // Example for older APIs
+            Manifest.permission.BLUETOOTH
         }
+        return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+    }
 
-        val permissionsToRequest = requiredPermissions.filter {
+    private fun checkAndRequestBluetoothPermissions() {
+        val permissionsToRequest = bluetoothPermissions().filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }.toTypedArray()
 
         if (permissionsToRequest.isEmpty()) {
             Log.d(TAG, "All required Bluetooth permissions already granted.")
-            startServerInThread() // Start server if permissions are present
+            startServerInThread()
         } else {
             Log.i(TAG, "Requesting Bluetooth permissions: ${permissionsToRequest.joinToString()}")
-            ActivityCompat.requestPermissions(
-                this,
-                permissionsToRequest,
-                REQUEST_BLUETOOTH_PERMISSION
-            )
+            requestBluetoothPermissionLauncher.launch(permissionsToRequest)
         }
     }
 
@@ -235,25 +209,38 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { connectionStatus = "Bluetooth Disabled" }
             return
         }
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            Log.e(TAG, "BLUETOOTH_CONNECT permission missing in server thread!")
+        if (!hasBluetoothConnectPermission()) {
+            Log.e(TAG, "Bluetooth permission missing in server thread!")
             runOnUiThread { connectionStatus = "Permission Error (Thread)" }
             return
         }
 
         Log.d(TAG, "Bluetooth server thread started.")
         try {
-            listenSocket = bluetoothAdapter?.listenUsingRfcommWithServiceRecord("DrinkSyncApp", MY_UUID)
-            runOnUiThread { connectionStatus = "Listening..." }
             while (serverRunning) {
+                if (listenSocket == null) {
+                    listenSocket = bluetoothAdapter?.listenUsingRfcommWithServiceRecord("DrinkSyncApp", MY_UUID)
+                    runOnUiThread { connectionStatus = "Listening..." }
+                }
                 val client = try {
                     listenSocket?.accept()
                 } catch (e: IOException) {
-                    if (serverRunning) {
-                        Log.e(TAG, "IOException accepting client: ${e.message}")
-                        runOnUiThread { connectionStatus = "Server Error" }
+                    if (!serverRunning) break
+                    Log.e(TAG, "IOException accepting client: ${e.message}")
+                    try {
+                        listenSocket?.close()
+                    } catch (closeError: IOException) {
+                        Log.e(TAG, "Error closing listen socket: ${closeError.message}", closeError)
                     }
-                    break
+                    listenSocket = null
+                    runOnUiThread { connectionStatus = "Reconnecting..." }
+                    try {
+                        Thread.sleep(500)
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        break
+                    }
+                    continue
                 } ?: break
                 activeClient = client
                 runOnUiThread { connectionStatus = "Connected" }
@@ -286,6 +273,7 @@ class MainActivity : ComponentActivity() {
         val inputStream = socket.inputStream
         val outputStream = socket.outputStream
         val buffer = ByteArray(1024)
+        val lines = LineBuffer()
         try {
             while (serverRunning) {
                 val bytesRead = inputStream.read(buffer)
@@ -293,18 +281,24 @@ class MainActivity : ComponentActivity() {
                     Log.i(TAG, "Client disconnected.")
                     break
                 }
-                val incomingMessage = String(buffer, 0, bytesRead).trim()
-                Log.d(TAG, "Received raw data: '$incomingMessage'")
-                val grams = DrinkEvent.parseGrams(incomingMessage)
-                if (grams != null) {
-                    val ozToAdd = DrinkEvent.gramsToOz(grams)
-                    runOnUiThread {
-                        intakeToAddFromBluetooth = ozToAdd
-                        connectionStatus = "Received $ozToAdd oz"
+                val chunk = String(buffer, 0, bytesRead, StandardCharsets.UTF_8)
+                Log.d(TAG, "Received raw data: '$chunk'")
+                for (incomingMessage in lines.add(chunk)) {
+                    val grams = DrinkEvent.parseGrams(incomingMessage)
+                    if (grams != null) {
+                        val ozToAdd = DrinkEvent.gramsToOz(grams)
+                        runOnUiThread {
+                            incomingDrink = ++incomingDrinkSeq to grams
+                            connectionStatus = if (ozToAdd > 0) {
+                                "Received $ozToAdd oz"
+                            } else {
+                                "Received sip (${"%.1f".format(grams)} g)"
+                            }
+                        }
+                        outputStream.write("OK\n".toByteArray(StandardCharsets.UTF_8))
+                    } else {
+                        Log.w(TAG, "Received message format mismatch: '$incomingMessage'")
                     }
-                    outputStream.write("OK\n".toByteArray())
-                } else {
-                    Log.w(TAG, "Received message format mismatch: '$incomingMessage'")
                 }
             }
         } catch (e: IOException) {
@@ -382,8 +376,8 @@ class Prefs(context: Context) : PrefsLike {
 @Composable
 fun MainScreen(
     connectionStatus: String,
-    intakeToAdd: Int?, // Intake amount from Bluetooth (oz)
-    onIntakeProcessed: () -> Unit // Callback to reset the intake amount trigger
+    incomingDrink: Pair<Long, Double>?,
+    onIntakeProcessed: () -> Unit
 ) {
     val navController = rememberNavController()
     val context = LocalContext.current // Get context for child composables
@@ -420,7 +414,7 @@ fun MainScreen(
                     HydrationScreen(
                         context = context,
                         store = store,
-                        intakeToAddFromBluetooth = intakeToAdd,
+                        incomingDrink = incomingDrink,
                         onIntakeProcessed = onIntakeProcessed
                     )
                 }
@@ -478,8 +472,8 @@ fun BottomNavigationBar(navController: NavHostController) {
 fun HydrationScreen(
     context: Context,
     store: HydrationStore,
-    intakeToAddFromBluetooth: Int?, // Intake amount from Bluetooth (oz)
-    onIntakeProcessed: () -> Unit // Callback to reset the trigger
+    incomingDrink: Pair<Long, Double>?,
+    onIntakeProcessed: () -> Unit
 ) {
     val state = store.snapshot
     var editIntake by remember { mutableStateOf("") }
@@ -529,9 +523,13 @@ fun HydrationScreen(
         editIntake = ""
     }
 
-    LaunchedEffect(intakeToAddFromBluetooth) {
-        if (intakeToAddFromBluetooth != null && intakeToAddFromBluetooth > 0) {
-            logWaterIntake(intakeToAddFromBluetooth)
+    LaunchedEffect(incomingDrink) {
+        val grams = incomingDrink?.second
+        if (grams != null) {
+            if (grams > 0) {
+                store.addGrams(grams)
+                maybeNotify(store.snapshot)
+            }
             onIntakeProcessed()
         }
     }
@@ -811,7 +809,7 @@ fun SettingsScreen(context: Context, store: HydrationStore) {
             )
         }
 
-        Divider() // Visual separator
+        HorizontalDivider() // Visual separator
 
         // --- Daily Goal Setting ---
         Row(
@@ -840,7 +838,7 @@ fun SettingsScreen(context: Context, store: HydrationStore) {
             )
         }
 
-        Divider()
+        HorizontalDivider()
 
         // --- Bluetooth Settings Button ---
         Button(
