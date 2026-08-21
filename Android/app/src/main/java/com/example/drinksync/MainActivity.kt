@@ -83,6 +83,7 @@ class MainActivity : ComponentActivity() {
     private var connectionStatus by mutableStateOf("Not Connected")
     private var incomingDrink by mutableStateOf<Pair<Long, Double>?>(null)
     private var incomingDrinkSeq = 0L
+    private val pendingDrinks = ArrayDeque<Pair<Long, Double>>()
 
     @Volatile
     private var serverRunning = false
@@ -114,7 +115,7 @@ class MainActivity : ComponentActivity() {
                 MainScreen(
                     connectionStatus = connectionStatus,
                     incomingDrink = incomingDrink,
-                    onIntakeProcessed = { incomingDrink = null }
+                    onIntakeProcessed = { dequeueProcessedDrink() }
                 )
             }
         }
@@ -169,6 +170,23 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+
+    private fun enqueueDrink(grams: Double) {
+        incomingDrinkSeq += 1
+        val event = incomingDrinkSeq to grams
+        pendingDrinks.addLast(event)
+        if (incomingDrink == null) {
+            incomingDrink = event
+        }
+    }
+
+    private fun dequeueProcessedDrink() {
+        val current = incomingDrink
+        if (current != null) {
+            pendingDrinks.removeAll { it.first == current.first }
+        }
+        incomingDrink = pendingDrinks.firstOrNull()
+    }
 
     // Creates the notification channel required for Android Oreo (API 26) and above
     @RequiresApi(Build.VERSION_CODES.O)
@@ -289,7 +307,7 @@ class MainActivity : ComponentActivity() {
                     if (grams != null) {
                         val ozToAdd = DrinkEvent.gramsToOz(grams)
                         runOnUiThread {
-                            incomingDrink = ++incomingDrinkSeq to grams
+                            enqueueDrink(grams)
                             connectionStatus = if (ozToAdd > 0) {
                                 "Received $ozToAdd oz"
                             } else {
@@ -408,7 +426,6 @@ private fun notifyHydrationMilestones(context: Context, store: HydrationStore) {
 }
 
 // --- Main Screen Composable with Navigation ---
-@RequiresApi(Build.VERSION_CODES.O) // Needed for child composables
 @Composable
 fun MainScreen(
     connectionStatus: String,
@@ -640,7 +657,6 @@ fun HydrationScreen(
 
 
 // --- Achievements Screen Composable ---
-@RequiresApi(Build.VERSION_CODES.O) // For java.time checks if needed
 @Composable
 fun AchievementScreen(store: HydrationStore) {
     val state = store.snapshot

@@ -160,7 +160,8 @@ class HydrationStoreTest {
 
     @Test
     fun halfwayDoesNotUnlockAtZeroWhenGoalIsOne() {
-        val store = store(dailyGoal = 1)
+        val store = store(dailyGoal = 64)
+        store.setDailyGoal(1)
         assertFalse(store.snapshot.halfwayToGoal)
         store.addIntake(1)
         assertTrue(store.snapshot.halfwayToGoal)
