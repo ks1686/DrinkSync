@@ -1,5 +1,7 @@
 import os
 
+from protocol import encode_message
+
 try:
     import bluetooth
 except ImportError:
@@ -42,7 +44,7 @@ def send_message(message):
         sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
         sock.connect((host, port))
         sock.settimeout(ACK_TIMEOUT_S)
-        sock.send(message)
+        sock.send(encode_message(message))
         try:
             data = sock.recv(1024)
             print("Received:", data.decode())

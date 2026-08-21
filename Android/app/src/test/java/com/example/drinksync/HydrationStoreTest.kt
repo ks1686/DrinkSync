@@ -99,4 +99,72 @@ class HydrationStoreTest {
         store.addIntake(8)
         assertTrue(store.snapshot.firstSip)
     }
+
+    @Test
+    fun missingLastResetDateIsWrittenSoTheNextDayResets() {
+        val memory = MemoryPrefs()
+        memory.saveInt(HydrationKeys.CURRENT_INTAKE, 12)
+        val day1 = LocalDate.of(2026, 8, 15)
+        val firstOpen = HydrationStore(memory, today = { day1 })
+        firstOpen.applyDailyResetIfNeeded()
+        assertEquals(12, firstOpen.snapshot.currentIntake)
+        assertEquals(day1.toString(), memory.getString(HydrationKeys.LAST_RESET_DATE, null))
+
+        val day2 = LocalDate.of(2026, 8, 16)
+        val nextOpen = HydrationStore(memory, today = { day2 })
+        nextOpen.applyDailyResetIfNeeded()
+        assertEquals(0, nextOpen.snapshot.currentIntake)
+        assertEquals(day2.toString(), nextOpen.snapshot.lastResetDate)
+    }
+
+    @Test
+    fun addGramsKeepsRemainderUntilAFullOunce() {
+        val store = store()
+        store.addGrams(10.0)
+        assertEquals(0, store.snapshot.currentIntake)
+        store.addGrams(20.0)
+        assertEquals(1, store.snapshot.currentIntake)
+    }
+
+    @Test
+    fun setDailyGoalRejectsZeroAndHugeValues() {
+        val store = store(dailyGoal = 64)
+        store.setDailyGoal(0)
+        assertEquals(64, store.snapshot.dailyGoal)
+        store.setDailyGoal(501)
+        assertEquals(64, store.snapshot.dailyGoal)
+        store.setDailyGoal(80)
+        assertEquals(80, store.snapshot.dailyGoal)
+    }
+
+    @Test
+    fun setIntakeDoesNotLetLifetimeTotalGoNegative() {
+        val store = store(currentIntake = 20, totalIntake = 8)
+        store.setIntake(0)
+        assertEquals(0, store.snapshot.currentIntake)
+        assertEquals(0, store.snapshot.totalIntake)
+    }
+
+    @Test
+    fun addIntakeOnANewDayResetsYesterdayFirst() {
+        val memory = MemoryPrefs()
+        memory.saveInt(HydrationKeys.CURRENT_INTAKE, 40)
+        memory.saveInt(HydrationKeys.TOTAL_INTAKE, 40)
+        memory.saveBoolean(HydrationKeys.HAS_HIT_GOAL, false)
+        memory.saveString(HydrationKeys.LAST_RESET_DATE, "2026-08-15")
+        val store = HydrationStore(memory, today = { LocalDate.of(2026, 8, 16) })
+        store.addIntake(8)
+        assertEquals(8, store.snapshot.currentIntake)
+        assertEquals(48, store.snapshot.totalIntake)
+    }
+
+    @Test
+    fun halfwayDoesNotUnlockAtZeroWhenGoalIsOne() {
+        val store = store(dailyGoal = 64)
+        store.setDailyGoal(1)
+        assertFalse(store.snapshot.halfwayToGoal)
+        store.addIntake(1)
+        assertTrue(store.snapshot.halfwayToGoal)
+        assertTrue(store.snapshot.hasHitGoal)
+    }
 }

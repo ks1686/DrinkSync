@@ -21,12 +21,6 @@ class HX711:
         # Mutex for reading from the HX711, in case multiple threads in client
         # software try to access get values from the class at the same time.
         self.readLock = threading.Lock()
-        
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(self.PD_SCK, GPIO.OUT)
-        GPIO.setup(self.DOUT, GPIO.IN)
-
-        self.GAIN = 0
 
         # The value returned by the hx711 that corresponds to your reference
         # unit AFTER dividing by the SCALE.
@@ -42,8 +36,25 @@ class HX711:
         self.byte_format = 'MSB'
         self.bit_format = 'MSB'
 
+        if GPIO is None:
+            if gain == 128:
+                self.GAIN = 1
+            elif gain == 64:
+                self.GAIN = 3
+            elif gain == 32:
+                self.GAIN = 2
+            else:
+                self.GAIN = 1
+            return
+
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(self.PD_SCK, GPIO.OUT)
+        GPIO.setup(self.DOUT, GPIO.IN)
+
+        self.GAIN = 0
+
         self.set_gain(gain)
-        
+
         # Think about whether this is necessary.
         time.sleep(1)
 

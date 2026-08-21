@@ -44,4 +44,15 @@ class DrinkEventTest {
         assertEquals(4, DrinkEvent.gramsToOz(123.4))
         assertEquals(0, DrinkEvent.gramsToOz(10.0))
     }
+
+    @Test
+    fun leftoverAfterAddingKeepsSmallSips() {
+        val first = DrinkEvent.leftoverAfterAdding(0.0, 10.0)
+        assertEquals(0, first.first)
+        assertEquals(10.0, first.second, 0.0001)
+
+        val second = DrinkEvent.leftoverAfterAdding(first.second, 20.0)
+        assertEquals(1, second.first)
+        assertEquals(30.0 - DrinkEvent.GRAMS_PER_OZ, second.second, 0.0001)
+    }
 }

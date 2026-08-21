@@ -22,6 +22,7 @@ object HydrationKeys {
     const val LATE_NIGHT_SIP = "lateNightSip"
     const val EARLY_BIRD = "earlyBirdDrinker"
     const val NOTIFICATION_TRIGGERS = "notificationTriggers"
+    const val LEFTOVER_GRAMS = "leftoverGrams"
 }
 
 data class HydrationSnapshot(
@@ -39,6 +40,7 @@ data class HydrationSnapshot(
     val lateNightSip: Boolean,
     val earlyBirdDrinker: Boolean,
     val notificationTriggers: Set<Int>,
+    val leftoverGrams: Double,
 )
 
 class HydrationStore(
@@ -51,6 +53,7 @@ class HydrationStore(
 
     fun addIntake(amountOz: Int) {
         if (amountOz <= 0) return
+        applyDailyResetIfNeeded()
         applyIntake(
             newCurrent = snapshot.currentIntake + amountOz,
             newTotal = snapshot.totalIntake + amountOz,
@@ -58,17 +61,30 @@ class HydrationStore(
         )
     }
 
+    fun addGrams(grams: Double) {
+        if (grams <= 0) return
+        applyDailyResetIfNeeded()
+        val (ounces, leftover) = DrinkEvent.leftoverAfterAdding(snapshot.leftoverGrams, grams)
+        persistLeftover(leftover)
+        snapshot = snapshot.copy(leftoverGrams = leftover)
+        if (ounces > 0) {
+            addIntake(ounces)
+        }
+    }
+
     fun setIntake(newIntake: Int) {
         if (newIntake < 0) return
+        applyDailyResetIfNeeded()
         val delta = newIntake - snapshot.currentIntake
         applyIntake(
             newCurrent = newIntake,
-            newTotal = snapshot.totalIntake + delta,
+            newTotal = (snapshot.totalIntake + delta).coerceAtLeast(0),
             loggedAmount = 0,
         )
     }
 
     fun setDailyGoal(goal: Int) {
+        if (goal !in 1..500) return
         prefs.saveInt(HydrationKeys.DAILY_GOAL, goal)
         snapshot = snapshot.copy(dailyGoal = goal).withGoalFlags()
         persistGoalFlags(snapshot)
@@ -87,7 +103,13 @@ class HydrationStore(
 
     fun applyDailyResetIfNeeded() {
         val todayDate = today()
-        val last = snapshot.lastResetDate.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+        val stored = prefs.getString(HydrationKeys.LAST_RESET_DATE, null)
+        if (stored.isNullOrBlank()) {
+            prefs.saveString(HydrationKeys.LAST_RESET_DATE, todayDate.toString())
+            snapshot = snapshot.copy(lastResetDate = todayDate.toString())
+            return
+        }
+        val last = runCatching { LocalDate.parse(stored) }.getOrNull()
         if (last == null) {
             prefs.saveString(HydrationKeys.LAST_RESET_DATE, todayDate.toString())
             snapshot = snapshot.copy(lastResetDate = todayDate.toString())
@@ -139,13 +161,17 @@ class HydrationStore(
 
     private fun HydrationSnapshot.withGoalFlags(): HydrationSnapshot {
         val goal = dailyGoal
-        val halfway = if (goal > 0) currentIntake >= goal / 2 else false
+        val halfway = if (goal > 0) currentIntake * 2 >= goal else false
         val hit = if (goal > 0) currentIntake >= goal else false
         return copy(
             halfwayToGoal = halfway,
             hasHitGoal = hit,
             hydrationHero = hydrationHero || hit,
         )
+    }
+
+    private fun persistLeftover(grams: Double) {
+        prefs.saveString(HydrationKeys.LEFTOVER_GRAMS, grams.toString())
     }
 
     private fun persistGoalFlags(state: HydrationSnapshot) {
@@ -162,7 +188,7 @@ class HydrationStore(
             dailyGoal = prefs.getInt(HydrationKeys.DAILY_GOAL, 64),
             hasHitGoal = prefs.getBoolean(HydrationKeys.HAS_HIT_GOAL, false),
             streak = prefs.getInt(HydrationKeys.STREAK, 0),
-            lastResetDate = prefs.getString(HydrationKeys.LAST_RESET_DATE, todayDate) ?: todayDate,
+            lastResetDate = prefs.getString(HydrationKeys.LAST_RESET_DATE, null) ?: todayDate,
             notifications = prefs.getBoolean(HydrationKeys.NOTIFICATIONS, true),
             firstSip = prefs.getBoolean(HydrationKeys.FIRST_SIP, false),
             halfwayToGoal = prefs.getBoolean(HydrationKeys.HALFWAY_TO_GOAL, false),
@@ -174,6 +200,7 @@ class HydrationStore(
                 ?.mapNotNull { it.toIntOrNull() }
                 ?.toSet()
                 ?: emptySet(),
+            leftoverGrams = prefs.getString(HydrationKeys.LEFTOVER_GRAMS, null)?.toDoubleOrNull() ?: 0.0,
         )
     }
 }

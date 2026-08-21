@@ -15,16 +15,13 @@ except ImportError:
 # Import functions from your scale script
 # Ensure scale_persistent_tare.py is in the same directory or PYTHONPATH
 try:
-    # We import 'hx' as well to check if it was initialized correctly
-    from scale_persistent_tare import take_reading, cleanAndExit, hx
+    import scale_persistent_tare as scale
 except ImportError:
     print("ERROR: Could not import from scale_persistent_tare.py.")
     print("Ensure the file exists and is in the correct path.")
     sys.exit(1)
 except Exception as e:
-    # Catch errors happening *during* the import/initialization of the scale script
     print(f"ERROR: An error occurred during import or initialization of the scale module: {e}")
-    # Attempt basic cleanup if possible, although scale's GPIO might not be setup
     try:
         import RPi.GPIO as GPIO
 
@@ -49,23 +46,25 @@ GYRO_THRESHOLD_Z = 4  # Max degrees/second allowed on Z-axis for stability
 # --- Stability Duration ---
 STABILITY_DURATION_REQUIRED = 3.0  # seconds
 SAMPLE_INTERVAL = 0.1  # seconds between stability checks (10 Hz)
+AWAITING_MOTION_TIMEOUT_S = 20.0
 
 # --- State Variables ---
 stability_start_time = None  # Tracks when the current stable period began
 gyro_sensor = None  # Gyro sensor object
+awaiting_motion = False  # After a reading, wait for a lift before the next one
+awaiting_motion_since = None
 
 
 # --- Main Function ---
 def run_stability_monitor():
-    global stability_start_time, gyro_sensor
+    global stability_start_time, gyro_sensor, awaiting_motion, awaiting_motion_since
 
     # --- Pre-checks ---
     # 1. Verify Scale Initialized (hx object should exist from import)
-    if hx is None:
-        print("ERROR: Scale HX711 object was not initialized correctly during import.")
+    if not scale.init_scale() or scale.hx is None:
+        print("ERROR: Scale HX711 object was not initialized correctly.")
         print("The scale_persistent_tare.py script might have failed.")
         print("Cannot proceed without a working scale.")
-        # No GPIO cleanup needed here as scale init failed before likely setup
         sys.exit(1)
     else:
         print("Scale module loaded and HX711 object appears initialized.")
@@ -81,7 +80,7 @@ def run_stability_monitor():
         print(f"FATAL ERROR: Failed to initialize MPU6050 sensor. Error: {e}")
         print("Check I2C connection, address (0x68 or 0x69?), and enable I2C in raspi-config.")
         # Attempt scale cleanup before exiting as scale *might* have initialized GPIO
-        cleanAndExit()
+        scale.cleanAndExit()
         sys.exit(1)
 
     # --- Monitoring Loop ---
@@ -130,7 +129,17 @@ def run_stability_monitor():
 
             # 3. Update Stability Timer and Trigger Scale Reading
             if is_stable_now:
-                if stability_start_time is None:
+                if awaiting_motion:
+                    if (
+                        awaiting_motion_since is not None
+                        and current_time - awaiting_motion_since >= AWAITING_MOTION_TIMEOUT_S
+                    ):
+                        awaiting_motion = False
+                        awaiting_motion_since = None
+                    else:
+                        # Cup is still sitting. Do not re-read until it is lifted.
+                        pass
+                elif stability_start_time is None:
                     # Just became stable
                     stability_start_time = current_time
                     print("\n--> Stable condition met. Starting timer...      ",
@@ -144,7 +153,7 @@ def run_stability_monitor():
                         print("--- Triggering Scale Reading ---")
 
                         # === CALL SCALE READING FUNCTION ===
-                        weight = take_reading()  # Function from scale_persistent_tare.py
+                        weight = scale.take_reading()
                         # ===================================
 
                         if weight is not None:
@@ -152,20 +161,23 @@ def run_stability_monitor():
                         else:
                             print("--- Scale Reading Failed (check scale script logs) ---")
 
-                        print("\nResuming stability monitoring...")
-                        # Reset timer to wait for the *next* stable period
+                        print("\nWaiting for the cup to move before the next reading...")
+                        awaiting_motion = True
+                        awaiting_motion_since = current_time
                         stability_start_time = None
-                        last_status_print_time = 0  # Force immediate status print update
-                        # Add a small pause after reading before resuming intense monitoring
+                        last_status_print_time = 0
                         time.sleep(0.5)
 
             else:  # Not stable now
-                if stability_start_time is not None:
-                    # Just became unstable
+                if awaiting_motion:
+                    print("\n--> Motion detected. Ready for the next sip.     ", end='\r')
+                elif stability_start_time is not None:
                     print("\n--> Unstable condition detected. Resetting timer...",
-                          end='\r')  # Extra spaces overwrite previous line
-                    stability_start_time = None  # Reset timer
-                    last_status_print_time = 0  # Force immediate status print update
+                          end='\r')
+                awaiting_motion = False
+                awaiting_motion_since = None
+                stability_start_time = None
+                last_status_print_time = 0
 
             # 4. Wait before next sample check
             time.sleep(SAMPLE_INTERVAL)
@@ -187,5 +199,5 @@ if __name__ == "__main__":
         # raised an exception, or exited via break (like Ctrl+C).
         print("\nExecuting final cleanup...")
         # Call the cleanup function imported from the scale script
-        cleanAndExit()
+        scale.cleanAndExit()
         print("Script finished.")

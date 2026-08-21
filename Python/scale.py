@@ -1,28 +1,27 @@
 import time
 import sys
 import numpy as np
-import RPi.GPIO as GPIO
-from hx711 import HX711
-from bt import send_message  # Import the send_message function
 from protocol import format_weight_difference
+
+try:
+    import RPi.GPIO as GPIO
+    from hx711 import HX711
+except ImportError:
+    GPIO = None
+    HX711 = None
+
+from bt import send_message
 
 
 def cleanAndExit():
     print("\nCleaning up...")
-    GPIO.cleanup()
+    if GPIO is not None:
+        GPIO.cleanup()
     print("Bye!")
     sys.exit()
 
 
-# Initialize HX711 on GPIO 5 (DT) and 6 (SCK)
-hx = HX711(5, 6)
-
-# Set byte order and bit order
-hx.set_reading_format("MSB", "MSB")
-
-
-# Function to stabilize tare
-def stable_tare(samples=20):
+def stable_tare(hx, samples=20):
     readings = []
     print("Taring... Please wait.")
     for _ in range(samples):
@@ -33,23 +32,12 @@ def stable_tare(samples=20):
     print(f"Tare complete. Offset set to: {avg_tare}")
 
 
-# Function to get stable weight reading
-def get_filtered_weight(samples=15):
+def get_filtered_weight(hx, samples=15):
     readings = [hx.get_weight(5) for _ in range(samples)]
-    return np.median(readings)  # Median helps remove noise
+    return np.median(readings)
 
 
-# Reset and Tare
-hx.reset()
-stable_tare()
-
-referenceUnit = 425.37  # Adjust this based on calibration
-hx.set_reference_unit(referenceUnit)
-
-print("\nTare done! Ready to take readings...")
-
-
-def take_reading():
+def take_reading(hx):
     """
     Takes a 3-second average reading from the scale and sends it as a message using bt.py.
     """
@@ -57,12 +45,10 @@ def take_reading():
         start_time = time.time()
         readings = []
 
-        # Collect readings for 3 seconds
         while time.time() - start_time < 3:
             readings.append(hx.get_weight(5))
-            time.sleep(0.1)  # Small delay to avoid excessive sampling
+            time.sleep(0.1)
 
-        # Calculate the average weight
         average_weight = np.mean(readings)
 
         message = format_weight_difference(average_weight)
@@ -71,7 +57,7 @@ def take_reading():
         else:
             print("Failed to send the message.")
 
-        print(f"Raw Values: {readings}")  # Debugging info
+        print(f"Raw Values: {readings}")
         print(f"Average Weight Sent: {average_weight:.2f} grams\n")
 
         hx.power_down()
@@ -82,11 +68,23 @@ def take_reading():
         print(f"Error during reading: {e}")
         cleanAndExit()
 
-# # loop to test readings
-# try:
-#     while True:
-#         take_reading()
-#         time.sleep(1)
-# except (KeyboardInterrupt, SystemExit):
-#     print("Exiting...")
-#     cleanAndExit()
+
+if __name__ == "__main__":
+    if GPIO is None or HX711 is None:
+        print("Raspberry Pi GPIO / HX711 is not available on this machine.")
+        sys.exit(1)
+
+    hx = HX711(5, 6)
+    hx.set_reading_format("MSB", "MSB")
+    hx.reset()
+    stable_tare(hx)
+    hx.set_reference_unit(425.37)
+    print("\nTare done! Ready to take readings...")
+    print("scale.py is a manual helper. Uncomment the loop below to send readings.")
+    # try:
+    #     while True:
+    #         take_reading(hx)
+    #         time.sleep(1)
+    # except (KeyboardInterrupt, SystemExit):
+    #     print("Exiting...")
+    #     cleanAndExit()

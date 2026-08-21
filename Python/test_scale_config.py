@@ -17,6 +17,24 @@ class ScaleConfigLoadTest(unittest.TestCase):
         self.assertEqual(loaded["offset"], 140173.33)
         self.assertEqual(loaded["referenceUnit"], 425.37)
         self.assertIsNone(loaded["initialMaxWeight"])
+        self.assertIsNone(loaded["lastWeight"])
+
+    def test_round_trip_preserves_last_weight(self):
+        from scale_config import load_scale_config, save_scale_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "scale_config.json")
+            save_scale_config(
+                path,
+                {
+                    "offset": 1,
+                    "referenceUnit": 425.37,
+                    "lastWeight": 248.5,
+                },
+            )
+            loaded = load_scale_config(path)
+        self.assertEqual(loaded["lastWeight"], 248.5)
+        self.assertIsNone(loaded["initialMaxWeight"])
 
     def test_bt_mac_prefers_environment(self):
         from bt import resolve_target_address

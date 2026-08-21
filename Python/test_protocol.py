@@ -1,6 +1,6 @@
 import unittest
 
-from protocol import format_weight_difference, parse_weight_difference
+from protocol import encode_message, format_weight_difference, parse_weight_difference
 
 
 class FormatWeightDifferenceTest(unittest.TestCase):
@@ -14,6 +14,18 @@ class FormatWeightDifferenceTest(unittest.TestCase):
         self.assertEqual(
             format_weight_difference(0),
             "Weight difference: 0.00 grams",
+        )
+
+    def test_encode_message_appends_newline_as_utf8(self):
+        self.assertEqual(
+            encode_message("Weight difference: 12.50 grams"),
+            b"Weight difference: 12.50 grams\n",
+        )
+
+    def test_encode_message_does_not_double_newline(self):
+        self.assertEqual(
+            encode_message("Weight difference: 12.50 grams\n"),
+            b"Weight difference: 12.50 grams\n",
         )
 
 
