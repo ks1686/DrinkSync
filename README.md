@@ -1,5 +1,6 @@
 # DrinkSync
 
+[![CI](https://github.com/ks1686/DrinkSync/actions/workflows/ci.yml/badge.svg)](https://github.com/ks1686/DrinkSync/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![IEEE](https://img.shields.io/badge/IEEE-11449671-00629B)](https://ieeexplore.ieee.org/document/11449671)
 
@@ -34,7 +35,7 @@ cd Android
 
 Open the `Android/` project in Android Studio for the emulator, Bluetooth permissions, and on-device install. The app listens as an RFCOMM service named `DrinkSyncApp`.
 
-GitHub Actions runs `python -m unittest discover -v` and `./gradlew :app:testDebugUnitTest` on every push and pull request to `main`.
+GitHub Actions runs the Python tests, plus `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug`, on every push and pull request to `main`. The debug APK is uploaded as a build artifact.
 
 Daily totals reset the first time you open the app on a new calendar day. Small sips under 1 oz stay in leftover grams and are added once they round to a full ounce.
 
