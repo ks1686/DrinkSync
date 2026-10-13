@@ -55,8 +55,8 @@ class HydrationStore(
         if (amountOz <= 0) return
         applyDailyResetIfNeeded()
         applyIntake(
-            newCurrent = snapshot.currentIntake + amountOz,
-            newTotal = snapshot.totalIntake + amountOz,
+            newCurrent = saturatingAdd(snapshot.currentIntake, amountOz),
+            newTotal = saturatingAdd(snapshot.totalIntake, amountOz),
             loggedAmount = amountOz,
         )
     }
@@ -75,10 +75,10 @@ class HydrationStore(
     fun setIntake(newIntake: Int) {
         if (newIntake < 0) return
         applyDailyResetIfNeeded()
-        val delta = newIntake - snapshot.currentIntake
+        val delta = newIntake.toLong() - snapshot.currentIntake
         applyIntake(
             newCurrent = newIntake,
-            newTotal = (snapshot.totalIntake + delta).coerceAtLeast(0),
+            newTotal = (snapshot.totalIntake + delta).coerceIn(0L, Int.MAX_VALUE.toLong()).toInt(),
             loggedAmount = 0,
         )
     }
@@ -159,9 +159,12 @@ class HydrationStore(
         snapshot = next
     }
 
+    private fun saturatingAdd(a: Int, b: Int): Int =
+        (a.toLong() + b).coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt()
+
     private fun HydrationSnapshot.withGoalFlags(): HydrationSnapshot {
         val goal = dailyGoal
-        val halfway = if (goal > 0) currentIntake * 2 >= goal else false
+        val halfway = if (goal > 0) currentIntake.toLong() * 2 >= goal else false
         val hit = if (goal > 0) currentIntake >= goal else false
         return copy(
             halfwayToGoal = halfway,
@@ -200,7 +203,10 @@ class HydrationStore(
                 ?.mapNotNull { it.toIntOrNull() }
                 ?.toSet()
                 ?: emptySet(),
-            leftoverGrams = prefs.getString(HydrationKeys.LEFTOVER_GRAMS, null)?.toDoubleOrNull() ?: 0.0,
+            leftoverGrams = prefs.getString(HydrationKeys.LEFTOVER_GRAMS, null)
+                ?.toDoubleOrNull()
+                ?.takeIf { it.isFinite() && it >= 0 }
+                ?: 0.0,
         )
     }
 }

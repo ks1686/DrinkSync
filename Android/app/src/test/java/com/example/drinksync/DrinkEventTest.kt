@@ -55,4 +55,20 @@ class DrinkEventTest {
         assertEquals(1, second.first)
         assertEquals(30.0 - DrinkEvent.GRAMS_PER_OZ, second.second, 0.0001)
     }
+
+    @Test
+    fun rejectsOverflowingNumber() {
+        assertNull(DrinkEvent.parseGrams("Weight difference: " + "9".repeat(400) + " grams"))
+    }
+
+    @Test
+    fun rejectsImplausiblyLargeEvent() {
+        assertNull(DrinkEvent.parseGrams("Weight difference: 1000000000000 grams"))
+        assertEquals(10_000.0, DrinkEvent.parseGrams("Weight difference: 10000 grams")!!, 0.0)
+    }
+
+    @Test
+    fun rejectsOverlongLine() {
+        assertNull(DrinkEvent.parseGrams("Weight difference: 12.50 grams" + " ".repeat(300)))
+    }
 }
