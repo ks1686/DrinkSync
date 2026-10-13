@@ -40,3 +40,7 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Editor and agent tooling
+.vscode/
+.cursor/
