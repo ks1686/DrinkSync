@@ -35,7 +35,7 @@ cd Android
 
 Open the `Android/` project in Android Studio for the emulator, Bluetooth permissions, and on-device install. The app listens as an RFCOMM service named `DrinkSyncApp`.
 
-GitHub Actions runs the Python tests, plus `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug`, on every push and pull request to `main`. The debug APK is uploaded as a build artifact.
+GitHub Actions runs ruff and the Python tests, plus `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug`, on every push and pull request to `main`. The debug APK is uploaded as a build artifact.
 
 Daily totals reset the first time you open the app on a new calendar day. Small sips under 1 oz stay in leftover grams and are added once they round to a full ounce.
 
