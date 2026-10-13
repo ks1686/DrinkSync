@@ -1,5 +1,8 @@
+"""Wire format v1 shared with the Android app: one UTF-8 line per drink event."""
+
 from __future__ import annotations
 
+import math
 import re
 
 _CANONICAL = "Weight difference: {grams:.2f} grams"
@@ -11,6 +14,8 @@ _MESSAGE = re.compile(
 
 
 def format_weight_difference(grams: float) -> str:
+    if not math.isfinite(grams):
+        raise ValueError(f"grams must be finite, got {grams!r}")
     return _CANONICAL.format(grams=grams)
 
 
@@ -24,6 +29,6 @@ def parse_weight_difference(message: str) -> float | None:
     if match is None:
         return None
     grams = float(match.group(1))
-    if grams <= 0:
+    if not math.isfinite(grams) or grams <= 0:
         return None
     return grams

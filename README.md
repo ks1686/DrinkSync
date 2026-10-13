@@ -35,7 +35,7 @@ cd Android
 
 Open the `Android/` project in Android Studio for the emulator, Bluetooth permissions, and on-device install. The app listens as an RFCOMM service named `DrinkSyncApp`.
 
-GitHub Actions runs the Python tests, plus `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug`, on every push and pull request to `main`. The debug APK is uploaded as a build artifact.
+GitHub Actions runs ruff and the Python tests, plus `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug`, on every push and pull request to `main`. The debug APK is uploaded as a build artifact.
 
 Daily totals reset the first time you open the app on a new calendar day. Small sips under 1 oz stay in leftover grams and are added once they round to a full ounce.
 
@@ -48,7 +48,7 @@ cd Python
 python3 stability_scale_trigger.py
 ```
 
-`scale.py` is a manual sender (its loop is commented out). `bt.py` opens the RFCOMM client. Set `DRINKSYNC_BT_MAC` to your phone's Classic Bluetooth address (default is the address baked into `bt.py`). `hx711.py` and `scale_persistent_tare.py` cover the load cell and persistent tare.
+Set `DRINKSYNC_BT_MAC` to your phone's Classic Bluetooth address before starting the service (for example `export DRINKSYNC_BT_MAC=AA:BB:CC:DD:EE:FF`). There is no built-in default; the service refuses to send until it is set. `bt.py` is the RFCOMM client and retries the service lookup and connect up to 3 times per event. `hx711.py` (vendored driver) and `scale_persistent_tare.py` cover the load cell and persistent tare; `gyroscope.py` is a standalone sensor debug helper.
 
 Each stable reading sends **only the drop since the last reading**. Putting a full cup down, then sipping twice, logs two sips — not the running total from full. A refill (weight goes up) resets the baseline and sends nothing. `scale_config.json` may omit `initialMaxWeight`; offset and reference unit are enough to load. `lastWeight` is written after each decision so a restart does not invent a drink.
 

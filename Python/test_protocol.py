@@ -64,5 +64,14 @@ class ParseWeightDifferenceTest(unittest.TestCase):
         self.assertIsNone(parse_weight_difference("Weight difference: -3.2 grams"))
 
 
+class NonFiniteTest(unittest.TestCase):
+    def test_format_rejects_non_finite(self):
+        with self.assertRaises(ValueError):
+            format_weight_difference(float("nan"))
+
+    def test_parse_rejects_overflowing_number(self):
+        self.assertIsNone(parse_weight_difference("Weight difference: " + "9" * 400 + " grams"))
+
+
 if __name__ == "__main__":
     unittest.main()

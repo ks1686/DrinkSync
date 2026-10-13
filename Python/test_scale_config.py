@@ -36,19 +36,38 @@ class ScaleConfigLoadTest(unittest.TestCase):
         self.assertEqual(loaded["lastWeight"], 248.5)
         self.assertIsNone(loaded["initialMaxWeight"])
 
-    def test_bt_mac_prefers_environment(self):
-        from bt import resolve_target_address
+    def test_rejects_non_numeric_calibration(self):
+        from scale_config import load_scale_config
 
-        with patch.dict(os.environ, {"DRINKSYNC_BT_MAC": "AA:BB:CC:DD:EE:FF"}):
-            self.assertEqual(resolve_target_address(), "AA:BB:CC:DD:EE:FF")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "scale_config.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"offset": "abc", "referenceUnit": 0}, handle)
+            with self.assertRaises(ValueError):
+                load_scale_config(path)
 
-    def test_bt_mac_falls_back_to_default(self):
-        from bt import DEFAULT_TARGET_ADDRESS, resolve_target_address
+    def test_ignores_non_finite_optional_values(self):
+        from scale_config import load_scale_config
 
-        env = os.environ.copy()
-        env.pop("DRINKSYNC_BT_MAC", None)
-        with patch.dict(os.environ, env, clear=True):
-            self.assertEqual(resolve_target_address(), DEFAULT_TARGET_ADDRESS)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "scale_config.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write('{"offset": 1, "referenceUnit": 2, "lastWeight": NaN, "initialMaxWeight": true}')
+            loaded = load_scale_config(path)
+        self.assertIsNone(loaded["lastWeight"])
+        self.assertIsNone(loaded["initialMaxWeight"])
+
+    def test_save_is_atomic_and_leaves_no_temp_files(self):
+        from scale_config import save_scale_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "scale_config.json")
+            save_scale_config(path, {"offset": 1, "referenceUnit": 2})
+            with patch("scale_config.json.dump", side_effect=OSError("disk full")), self.assertRaises(OSError):
+                save_scale_config(path, {"offset": 9, "referenceUnit": 9})
+            self.assertEqual(os.listdir(tmp), ["scale_config.json"])
+            with open(path, encoding="utf-8") as handle:
+                self.assertEqual(json.load(handle), {"offset": 1, "referenceUnit": 2})
 
 
 if __name__ == "__main__":

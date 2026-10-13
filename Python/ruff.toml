@@ -1,0 +1,6 @@
+target-version = "py39"
+line-length = 120
+extend-exclude = ["hx711.py"]  # vendored HX711 driver, kept as upstream
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]

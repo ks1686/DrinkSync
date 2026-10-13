@@ -1,6 +1,6 @@
 import unittest
 
-from drink_math import MIN_DRINK_GRAMS, leftover_after_adding, next_drink
+from drink_math import GRAMS_PER_OZ, MIN_DRINK_GRAMS, leftover_after_adding, next_drink, round_half_up
 
 
 class NextDrinkTest(unittest.TestCase):
@@ -46,6 +46,23 @@ class LeftoverGramsTest(unittest.TestCase):
         ounces, leftover = leftover_after_adding(10.0, 20.0)
         self.assertEqual(ounces, 1)
         self.assertAlmostEqual(leftover, 30.0 - 29.5735, places=4)
+
+    def test_half_ounce_rounds_up_like_kotlin_round_to_int(self):
+        # Kotlin's 2.5.roundToInt() == 3; Python's round(2.5) == 2.
+        ounces, _ = leftover_after_adding(0.0, 2.5 * GRAMS_PER_OZ)
+        self.assertEqual(ounces, 3)
+        self.assertEqual(round_half_up(0.5), 1)
+        self.assertEqual(round_half_up(0.49), 0)
+
+
+class NonFiniteReadingTest(unittest.TestCase):
+    def test_nan_reading_does_not_poison_baseline(self):
+        grams, previous = next_drink(None, float("nan"))
+        self.assertIsNone(grams)
+        self.assertIsNone(previous)
+        grams, previous = next_drink(300.0, float("inf"))
+        self.assertIsNone(grams)
+        self.assertEqual(previous, 300.0)
 
 
 if __name__ == "__main__":
