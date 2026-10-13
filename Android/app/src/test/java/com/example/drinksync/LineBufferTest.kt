@@ -43,4 +43,14 @@ class LineBufferTest {
             buffer.add("Weight difference: 12.50 grams\nWeight difference: 8.00 grams\n"),
         )
     }
+
+    @Test
+    fun dropsUnterminatedFloodAndRecovers() {
+        val buffer = LineBuffer(maxPending = 64)
+        assertEquals(emptyList<String>(), buffer.add("x".repeat(1000)))
+        assertEquals(
+            listOf("Weight difference: 8.00 grams"),
+            buffer.add("Weight difference: 8.00 grams\n"),
+        )
+    }
 }

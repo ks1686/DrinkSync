@@ -167,4 +167,23 @@ class HydrationStoreTest {
         assertTrue(store.snapshot.halfwayToGoal)
         assertTrue(store.snapshot.hasHitGoal)
     }
+
+    @Test
+    fun addIntakeSaturatesInsteadOfOverflowing() {
+        val store = store(currentIntake = Int.MAX_VALUE - 1, totalIntake = Int.MAX_VALUE - 1)
+        store.addIntake(8)
+        assertEquals(Int.MAX_VALUE, store.snapshot.currentIntake)
+        assertEquals(Int.MAX_VALUE, store.snapshot.totalIntake)
+        assertTrue(store.snapshot.hasHitGoal)
+    }
+
+    @Test
+    fun corruptLeftoverGramsLoadAsZero() {
+        val memory = MemoryPrefs()
+        memory.saveString(HydrationKeys.LEFTOVER_GRAMS, "NaN")
+        val store = HydrationStore(memory, today = { LocalDate.of(2026, 8, 15) })
+        assertEquals(0.0, store.snapshot.leftoverGrams, 0.0)
+        store.addGrams(29.5735)
+        assertEquals(1, store.snapshot.currentIntake)
+    }
 }
