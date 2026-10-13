@@ -1,7 +1,12 @@
-import time
-import sys
-import numpy as np
+"""HX711 scale service with persistent tare: turns stable readings into drink events."""
+
+from __future__ import annotations
+
 import os
+import statistics
+import sys
+import time
+from typing import Any
 
 from bt import send_message
 from drink_math import next_drink
@@ -28,13 +33,13 @@ TAKE_READING_SAMPLE_DELAY = 0.1
 DOUT_PIN = 5
 PD_SCK_PIN = 6
 
-hx = None
-initial_max_weight = None
-last_weight = None
+hx: Any = None
+initial_max_weight: float | None = None
+last_weight: float | None = None
 _initialized = False
 
 
-def cleanAndExit():
+def cleanAndExit() -> None:
     """Cleans up GPIO resources and exits."""
     print("\nCleaning up GPIO...")
     try:
@@ -51,7 +56,7 @@ def cleanAndExit():
     sys.exit()
 
 
-def persist_last_weight():
+def persist_last_weight() -> None:
     if last_weight is None:
         return
     config = {
@@ -77,7 +82,7 @@ def persist_last_weight():
         print(f"Warning: Failed to persist last weight: {e}")
 
 
-def stable_tare(hx_instance, samples=STABLE_TARE_SAMPLES):
+def stable_tare(hx_instance: Any, samples: int = STABLE_TARE_SAMPLES) -> float | None:
     """Tare the scale and return the calculated offset."""
     if not hx_instance:
         print("Error: HX711 instance not provided for tare.")
@@ -97,9 +102,9 @@ def stable_tare(hx_instance, samples=STABLE_TARE_SAMPLES):
             raw_reading = hx_instance.read_average(times=GET_WEIGHT_SAMPLES)
             if raw_reading is not False:
                 readings.append(raw_reading)
-                print(f"  Tare sample {i+1}/{samples}: {raw_reading}")
+                print(f"  Tare sample {i + 1}/{samples}: {raw_reading}")
             else:
-                print(f"  Warning: Got invalid raw reading during tare sample {i+1}")
+                print(f"  Warning: Got invalid raw reading during tare sample {i + 1}")
             time.sleep(0.1)
         except Exception as e:
             print(f"  Error getting raw data during tare: {e}")
@@ -108,16 +113,16 @@ def stable_tare(hx_instance, samples=STABLE_TARE_SAMPLES):
         print("ERROR: Could not get any valid readings during tare. Cannot set offset.")
         return None
 
-    avg_tare_offset = np.median(readings)
+    avg_tare_offset = statistics.median(readings)
     hx_instance.set_offset(avg_tare_offset)
     print(f"Tare complete. Offset set to: {avg_tare_offset}")
     time.sleep(0.5)
     return avg_tare_offset
 
 
-def take_reading():
+def take_reading() -> float | None:
     """Average the scale, send only the incremental sip, and return grams sent."""
-    global hx, last_weight
+    global last_weight
     if not hx:
         print("Error: Scale (hx) not initialized. Cannot take reading.")
         return None
@@ -148,23 +153,18 @@ def take_reading():
             print("Error: No valid readings collected.")
             return None
 
-        current_weight = float(np.median(readings))
+        current_weight = float(statistics.median(readings))
         grams, new_previous = next_drink(last_weight, current_weight)
 
         if grams is None:
             last_weight = new_previous
             persist_last_weight()
-            print(
-                f"No drink event (current={current_weight:.2f} g, baseline={last_weight:.2f} g)"
-            )
+            print(f"No drink event (current={current_weight:.2f} g, baseline={last_weight:.2f} g)")
             hx.power_down()
             return None
 
         if initial_max_weight is not None and grams > initial_max_weight:
-            print(
-                f"Warning: Discarding implausible drink {grams:.2f} g "
-                f"(above max {initial_max_weight:.2f} g)"
-            )
+            print(f"Warning: Discarding implausible drink {grams:.2f} g (above max {initial_max_weight:.2f} g)")
             hx.power_down()
             return None
 
@@ -191,7 +191,7 @@ def take_reading():
         return None
 
 
-def init_scale():
+def init_scale() -> bool:
     """Initialize HX711 from saved config, or tare on first run."""
     global hx, initial_max_weight, last_weight, _initialized
     if _initialized:

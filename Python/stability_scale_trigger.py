@@ -1,8 +1,7 @@
 # File: stability_scale_trigger.py
 
-import time
 import sys
-import math  # Required if using magnitude threshold
+import time
 
 # Import the gyroscope library
 try:
@@ -96,9 +95,9 @@ def run_stability_monitor():
             # It's good practice to handle potential errors during sensor reads
             try:
                 gyro_data = gyro_sensor.get_gyro_data()
-                gx = gyro_data['x']
-                gy = gyro_data['y']
-                gz = gyro_data['z']
+                gx = gyro_data["x"]
+                gy = gyro_data["y"]
+                gz = gyro_data["z"]
             except Exception as read_err:
                 print(f"\nWarning: Error reading gyroscope data: {read_err}")
                 # Decide how to handle read errors - skip this cycle? Reset timer?
@@ -108,9 +107,7 @@ def run_stability_monitor():
 
             # 2. Check if Current Reading is Stable
             # --- Using individual axes ---
-            is_stable_now = (abs(gx) < GYRO_THRESHOLD_X and
-                             abs(gy) < GYRO_THRESHOLD_Y and
-                             abs(gz) < GYRO_THRESHOLD_Z)
+            is_stable_now = abs(gx) < GYRO_THRESHOLD_X and abs(gy) < GYRO_THRESHOLD_Y and abs(gz) < GYRO_THRESHOLD_Z
             # --- OR Using magnitude (uncomment the next 2 lines and comment out the block above) ---
             # gyro_magnitude = math.sqrt(gx**2 + gy**2 + gz**2)
             # is_stable_now = gyro_magnitude < GYRO_MAGNITUDE_THRESHOLD
@@ -123,8 +120,9 @@ def run_stability_monitor():
                 elapsed_stable_time = (current_time - stability_start_time) if stability_start_time else 0
                 # Format gyro readings for cleaner output
                 gyro_str = f"Gx={gx: >+6.1f}, Gy={gy: >+6.1f}, Gz={gz: >+6.1f}"
-                print(f"Status: {stability_status: <8} | Stable Time: {elapsed_stable_time:4.1f}s | {gyro_str}",
-                      end='\r')  # Use '\r' to update line
+                print(
+                    f"Status: {stability_status: <8} | Stable Time: {elapsed_stable_time:4.1f}s | {gyro_str}", end="\r"
+                )  # Use '\r' to update line
                 last_status_print_time = current_time
 
             # 3. Update Stability Timer and Trigger Scale Reading
@@ -142,8 +140,9 @@ def run_stability_monitor():
                 elif stability_start_time is None:
                     # Just became stable
                     stability_start_time = current_time
-                    print("\n--> Stable condition met. Starting timer...      ",
-                          end='\r')  # Extra spaces overwrite previous line
+                    print(
+                        "\n--> Stable condition met. Starting timer...      ", end="\r"
+                    )  # Extra spaces overwrite previous line
                     last_status_print_time = 0  # Force immediate status print update
                 else:
                     # Already stable, check if duration met
@@ -170,10 +169,9 @@ def run_stability_monitor():
 
             else:  # Not stable now
                 if awaiting_motion:
-                    print("\n--> Motion detected. Ready for the next sip.     ", end='\r')
+                    print("\n--> Motion detected. Ready for the next sip.     ", end="\r")
                 elif stability_start_time is not None:
-                    print("\n--> Unstable condition detected. Resetting timer...",
-                          end='\r')
+                    print("\n--> Unstable condition detected. Resetting timer...", end="\r")
                 awaiting_motion = False
                 awaiting_motion_since = None
                 stability_start_time = None
